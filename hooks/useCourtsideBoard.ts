@@ -59,7 +59,7 @@ interface MatchRow {
   score_team1: number | null;
   score_team2: number | null;
   winner_team: 'team1' | 'team2' | null;
-  status: 'active' | 'completed';
+  status: 'queued' | 'playing' | 'active' | 'completed';
   match_type?: 'custom' | 'mixed';
 }
 
@@ -103,6 +103,14 @@ function scoreToWinner(scoreA: number | null, scoreB: number | null): 'team1' | 
   }
 
   return scoreA > scoreB ? 'team1' : 'team2';
+}
+
+function isQueuedMatchStatus(status: MatchRow['status']) {
+  return status === 'queued' || status === 'active';
+}
+
+function isPlayingMatchStatus(status: MatchRow['status']) {
+  return status === 'playing' || status === 'active';
 }
 
 function getBatchIdFromName(name: string): BatchId | null {
@@ -347,9 +355,9 @@ function normalizeSnapshot(input: {
 
   const playersById = new Map(players.map((player) => [player.id, player]));
 
-  const liveMatches = input.matches.filter((row) => row.status === 'active' && row.court_id);
+  const liveMatches = input.matches.filter((row) => isPlayingMatchStatus(row.status) && row.court_id);
   const queuedMatches = input.matches
-    .filter((row) => row.status === 'active' && !row.court_id)
+    .filter((row) => isQueuedMatchStatus(row.status) && !row.court_id)
     .sort((a, b) => (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id));
   const activePlayerIds = new Set<string>();
   for (const match of liveMatches) {
@@ -999,7 +1007,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time')
       .eq('batch_id', dbBatchId)
-      .eq('status', 'active')
+      .in('status', ['queued', 'active'])
       .is('court_id', null)
       .order('start_time', { ascending: true });
 
@@ -1042,7 +1050,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         team2_player1_id: string;
         team2_player2_id: string;
         start_time: string;
-        status: 'active';
+        status: 'queued';
         score_team1: number;
         score_team2: number;
         is_pair_match: false;
@@ -1055,7 +1063,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         team2_player1_id: next.teamB[0],
         team2_player2_id: next.teamB[1],
         start_time: new Date(base + index * 1000).toISOString(),
-        status: 'active',
+        status: 'queued',
         score_team1: 0,
         score_team2: 0,
         is_pair_match: false,
@@ -1089,7 +1097,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .select('id,start_time')
       .eq('batch_id', dbBatchId)
-      .eq('status', 'active')
+      .in('status', ['queued', 'active'])
       .is('court_id', null)
       .order('start_time', { ascending: true });
 
@@ -1188,7 +1196,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         team2_player1_id: string | null;
         team2_player2_id: string | null;
         start_time: string;
-        status: 'active';
+        status: 'playing';
         score_team1: number;
         score_team2: number;
         is_pair_match: boolean;
@@ -1201,7 +1209,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         team2_player1_id: selectedPlayers.playerIds[2] ?? null,
         team2_player2_id: selectedPlayers.playerIds[3] ?? null,
         start_time: nowIso(),
-        status: 'active',
+        status: 'playing',
         score_team1: 0,
         score_team2: 0,
         is_pair_match: mode === 'custom',
@@ -1230,7 +1238,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .select('id')
       .eq('batch_id', dbBatchId)
-      .eq('status', 'active')
+      .in('status', ['queued', 'active'])
       .is('court_id', null)
       .order('start_time', { ascending: true })
       .limit(1);
@@ -1244,6 +1252,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .update({
         court_id: courtId,
+        status: 'playing',
         start_time: nowIso(),
       })
       .eq('id', nextReady.id)
@@ -1426,7 +1435,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time')
       .eq('batch_id', dbBatchId)
-      .eq('status', 'active')
+      .in('status', ['queued', 'active'])
       .is('court_id', null)
       .order('start_time', { ascending: true });
 
@@ -1516,7 +1525,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       team2_player1_id: string;
       team2_player2_id: string;
       start_time: string;
-      status: 'active';
+      status: 'queued';
       score_team1: number;
       score_team2: number;
       is_pair_match: false;
@@ -1529,7 +1538,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       team2_player1_id: uniqueIds[2],
       team2_player2_id: uniqueIds[3],
       start_time: queuedAt,
-      status: 'active',
+      status: 'queued',
       score_team1: 0,
       score_team2: 0,
       is_pair_match: false,
@@ -1560,7 +1569,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .select('id')
       .eq('batch_id', dbBatchId)
-      .eq('status', 'active')
+      .in('status', ['queued', 'active'])
       .is('court_id', null)
       .order('start_time', { ascending: true });
 
@@ -1576,6 +1585,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         .from('matches')
         .update({
           court_id: court.id,
+          status: 'playing',
           start_time: startedAt,
         })
         .eq('id', readyMatch.id)
@@ -1608,6 +1618,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .update({
         court_id: courtId,
+        status: 'playing',
         start_time: startedAt,
       })
       .eq('id', matchId)
