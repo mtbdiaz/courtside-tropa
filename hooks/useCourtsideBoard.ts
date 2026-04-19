@@ -690,18 +690,42 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const currentUnit = currentOrder[index];
-    const targetUnit = currentOrder[targetIndex];
+    const nextOrder = currentOrder.slice();
+    const [moved] = nextOrder.splice(index, 1);
+    nextOrder.splice(targetIndex, 0, moved);
 
-    const currentPlayers = currentUnit.playerIds;
-    const targetPlayers = targetUnit.playerIds;
-    const currentTimestamp = new Date().toISOString();
-    const targetTimestamp = new Date(Date.now() + (direction === 'up' ? -1000 : 1000)).toISOString();
+    const base = Date.now() - nextOrder.length * 2000;
+    for (let i = 0; i < nextOrder.length; i += 1) {
+      const createdAt = new Date(base + i * 2000).toISOString();
+      await supabase
+        .from('players')
+        .update({ created_at: createdAt })
+        .in('id', nextOrder[i].playerIds)
+        .eq('batch_id', dbBatchId);
+    }
 
-    await Promise.all([
-      supabase.from('players').update({ created_at: direction === 'up' ? targetTimestamp : currentTimestamp }).in('id', currentPlayers),
-      supabase.from('players').update({ created_at: direction === 'up' ? currentTimestamp : targetTimestamp }).in('id', targetPlayers),
-    ]);
+    await loadFromDatabase();
+  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+
+  const refreshQueueProcess = useCallback(async (batchId: BatchId) => {
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
+      return;
+    }
+
+    const batch = snapshot.batches[batchId];
+    const queueUnits = resolveQueueUnits(batch);
+    const base = Date.now() - queueUnits.length * 2000;
+
+    for (let i = 0; i < queueUnits.length; i += 1) {
+      const createdAt = new Date(base + i * 2000).toISOString();
+      await supabase
+        .from('players')
+        .update({ created_at: createdAt })
+        .in('id', queueUnits[i].playerIds)
+        .eq('batch_id', dbBatchId);
+    }
 
     await loadFromDatabase();
   }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
@@ -1028,6 +1052,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     unlockSelectedPair,
     moveQueueUnit,
     removeQueueMatch,
+    refreshQueueProcess,
     startMatchOnCourt,
     completeMatch,
     cancelMatch,

@@ -50,6 +50,7 @@ export default function CourtsideBoard({
     unlockSelectedPair,
     moveQueueUnit,
     removeQueueMatch,
+    refreshQueueProcess,
     startMatchOnCourt,
     completeMatch,
     cancelMatch,
@@ -165,7 +166,7 @@ export default function CourtsideBoard({
   }, [activeBatch]);
 
   const upcomingMatches = useMemo(() => {
-    return previewUpcomingMatches(activeBatch, activeBatch.activeMode, 7);
+    return previewUpcomingMatches(activeBatch, activeBatch.activeMode, 999);
   }, [activeBatch]);
 
   const onToggleCustomPlayer = (playerId: string) => {
@@ -192,9 +193,6 @@ export default function CourtsideBoard({
       return;
     }
 
-    const [firstA, firstB, secondA, secondB] = customSelection;
-    await lockSelectedPair(activeBatch.batchId, firstA, firstB);
-    await lockSelectedPair(activeBatch.batchId, secondA, secondB);
     await prioritizePlayersForQueue(activeBatch.batchId, customSelection);
     setCustomSelection([]);
     setCustomSearch('');
@@ -337,8 +335,22 @@ export default function CourtsideBoard({
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-amber-300/30 bg-gradient-to-r from-amber-300/20 via-orange-300/20 to-rose-300/20 px-5 py-4 text-sm font-medium text-amber-50">
-          {announcement}
+        <section className="relative overflow-hidden rounded-[2rem] border border-amber-300/35 bg-gradient-to-r from-amber-300/25 via-orange-300/25 to-rose-300/25 px-6 py-6 shadow-[0_12px_40px_rgba(251,191,36,0.2)] sm:px-8 sm:py-7">
+          <div className="pointer-events-none absolute -left-16 top-0 h-36 w-36 rounded-full bg-amber-200/20 blur-3xl" />
+          <div className="pointer-events-none absolute -right-16 bottom-0 h-36 w-36 rounded-full bg-rose-200/20 blur-3xl" />
+
+          <div className="relative flex items-start gap-3">
+            <div className="mt-1 flex h-3 w-3 items-center justify-center">
+              <span className="absolute h-3 w-3 animate-ping rounded-full bg-emerald-300/80" />
+              <span className="relative h-2.5 w-2.5 rounded-full bg-emerald-300" />
+            </div>
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-[0.3em] text-amber-100/90">Now Calling</div>
+              <div className="mt-2 text-lg font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-2xl">
+                {announcement}
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
@@ -591,20 +603,20 @@ export default function CourtsideBoard({
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <label className="text-sm text-slate-200/90">Single player</label>
-                <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_120px]">
+                <div className="mt-2 space-y-2">
                   <input
                     value={playerName}
                     onChange={(event) => setPlayerName(event.target.value)}
                     placeholder="Player name"
-                    className="glass-input rounded-2xl px-4 py-3 text-sm"
+                    className="glass-input w-full rounded-2xl px-4 py-3 text-sm"
                   />
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {(['M', 'F'] as const).map((gender) => (
                       <button
                         key={gender}
                         type="button"
                         onClick={() => setPlayerGender(gender)}
-                        className={`flex-1 rounded-2xl border px-3 py-3 text-sm font-medium transition ${
+                        className={`rounded-2xl border px-4 py-2 text-sm font-medium transition ${
                           playerGender === gender
                             ? 'border-amber-300/50 bg-amber-300/15 text-amber-100'
                             : 'border-white/10 bg-white/5 text-slate-200/80'
@@ -633,8 +645,8 @@ export default function CourtsideBoard({
                   placeholder={'One name per line'}
                   className="glass-input mt-2 w-full rounded-2xl px-4 py-3 text-sm"
                 />
-                <div className="mt-3 flex items-center justify-between gap-2">
-                  <div className="flex gap-2">
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {(['M', 'F'] as const).map((gender) => (
                       <button
                         key={gender}
@@ -738,15 +750,24 @@ export default function CourtsideBoard({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <div className="mt-1 text-xs text-slate-300/80">Showing up to 7 ready matches</div>
+                <div className="mt-1 text-xs text-slate-300/80">Showing all ready matches</div>
               </div>
-              <button
-                type="button"
-                onClick={() => fillIdleCourts(activeBatch.batchId)}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
-              >
-                Auto-fill courts
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => refreshQueueProcess(activeBatch.batchId)}
+                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
+                >
+                  Refresh queue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillIdleCourts(activeBatch.batchId)}
+                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
+                >
+                  Auto-fill courts
+                </button>
+              </div>
             </div>
             <div className="mt-4 space-y-3">
               {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">Queue is empty.</div> : null}
