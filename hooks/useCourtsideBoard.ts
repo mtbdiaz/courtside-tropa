@@ -544,6 +544,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     const next = createEmptyCourtsideSnapshot();
+    const courtsToBootstrap: Array<{
+      batch_id: string;
+      court_number: number;
+      status: 'free';
+      current_match_id: null;
+      start_time: null;
+    }> = [];
 
     for (const batchId of [1, 2] as BatchId[]) {
       const row = byLogicalBatch.get(batchId);
@@ -553,15 +560,44 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
 
       batchDbIdRef.current[batchId] = row.id;
+      const batchCourts = courts.filter((entry) => entry.batch_id === row.id);
+      if (batchCourts.length === 0 && (row.num_courts ?? 0) > 0) {
+        courtsToBootstrap.push(
+          ...Array.from({ length: row.num_courts ?? 0 }, (_, index) => ({
+            batch_id: row.id,
+            court_number: index + 1,
+            status: 'free' as const,
+            current_match_id: null,
+            start_time: null,
+          })),
+        );
+      }
+
       next.batches[batchId] = normalizeSnapshot({
         batchId,
         batchRow: row,
         players: players.filter((entry) => entry.batch_id === row.id),
-        courts: courts.filter((entry) => entry.batch_id === row.id),
+        courts: batchCourts.length > 0
+          ? batchCourts
+          : Array.from({ length: row.num_courts ?? 0 }, (_, index) => ({
+              id: `synthetic-${row.id}-${index + 1}`,
+              batch_id: row.id,
+              court_number: index + 1,
+              status: 'free' as const,
+              current_match_id: null,
+              start_time: null,
+            })),
         matches: matches.filter((entry) => entry.batch_id === row.id),
         histories: histories.filter((entry) => entry.batch_id === row.id),
         activeMode: activeModes[batchId],
       });
+    }
+
+    if (courtsToBootstrap.length > 0) {
+      const { error: bootstrapError } = await supabase.from('courts').insert(courtsToBootstrap);
+      if (bootstrapError) {
+        console.error('Court bootstrap failed', bootstrapError);
+      }
     }
 
     const hasData = (batchId: BatchId) => {
@@ -657,13 +693,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    await supabase.from('players').insert({
+    const { error } = await supabase.from('players').insert({
       batch_id: dbBatchId,
       name: name.trim(),
       gender,
       status: 'checked-in',
       created_at: nowIso(),
     });
+
+    if (error) {
+      console.error('Add player failed', error);
+      return;
+    }
 
     await loadFromDatabase();
   }, [loadFromDatabase, withBatchDbId]);
@@ -675,7 +716,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    await supabase.from('players').insert(
+    const { error } = await supabase.from('players').insert(
       names
         .map((value) => value.trim())
         .filter(Boolean)
@@ -687,6 +728,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
           created_at: nowIso(),
         }))
     );
+
+    if (error) {
+      console.error('Bulk add players failed', error);
+      return;
+    }
 
     await loadFromDatabase();
   }, [loadFromDatabase, withBatchDbId]);

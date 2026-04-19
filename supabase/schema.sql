@@ -134,3 +134,19 @@ begin
     (event_uuid, 'Batch 2', '1:00 PM - 5:00 PM', '1:00 PM - 5:00 PM', 5)
   on conflict do nothing;
 end $$;
+
+do $$
+declare
+  batch_record record;
+begin
+  for batch_record in
+    select id, coalesce(num_courts, 5) as num_courts
+    from batches
+  loop
+    if not exists (select 1 from courts where batch_id = batch_record.id) then
+      insert into courts (batch_id, court_number, status)
+      select batch_record.id, gs, 'free'
+      from generate_series(1, batch_record.num_courts) as gs;
+    end if;
+  end loop;
+end $$;
