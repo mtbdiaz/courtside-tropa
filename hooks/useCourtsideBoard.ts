@@ -66,7 +66,8 @@ interface MatchRow {
 interface MatchHistoryRow {
   id: string;
   batch_id: string;
-  match_id: string | null;
+  original_match_id?: string | null;
+  match_id?: string | null;
   court_number: number | null;
   team1_player1_name: string | null;
   team1_player2_name: string | null;
@@ -111,6 +112,10 @@ function isQueuedMatchStatus(status: MatchRow['status']) {
 
 function isPlayingMatchStatus(status: MatchRow['status']) {
   return status === 'playing' || status === 'active';
+}
+
+function historyMatchId(row: MatchHistoryRow) {
+  return row.original_match_id ?? row.match_id ?? null;
 }
 
 function getBatchIdFromName(name: string): BatchId | null {
@@ -430,7 +435,12 @@ function normalizeSnapshot(input: {
     };
   });
 
-  const historyByMatchId = new Map(input.histories.filter((row) => row.match_id).map((row) => [row.match_id as string, row]));
+  const historyByMatchId = new Map(
+    input.histories
+      .map((row) => [historyMatchId(row), row] as const)
+      .filter(([id]) => Boolean(id))
+      .map(([id, row]) => [id as string, row]),
+  );
 
   const completedHistory = [...input.matches]
     .filter((match) => match.status === 'completed')
@@ -481,6 +491,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const supabaseRef = useRef<ReturnType<typeof createSupabaseBrowserClient> | null>(null);
   const batchDbIdRef = useRef<Record<BatchId, string | null>>({ 1: null, 2: null });
   const supportsMatchTypeRef = useRef(true);
+  const historyMatchIdColumnRef = useRef<'original_match_id' | 'match_id'>('original_match_id');
 
   const [snapshot, setSnapshot] = useState(() => {
     const empty = createEmptyCourtsideSnapshot();
@@ -507,14 +518,51 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       { data: batchesData, error: batchesError },
       { data: playersData, error: playersError },
       { data: courtsData, error: courtsError },
-      { data: historyData, error: historyError },
     ] = await Promise.all([
       supabase.auth.getSession(),
       supabase.from('batches').select('id,name,num_courts,created_at').order('created_at', { ascending: true }),
       supabase.from('players').select('id,batch_id,name,gender,status,pair_id,created_at').order('created_at', { ascending: true }),
       supabase.from('courts').select('id,batch_id,court_number,status,current_match_id,start_time').order('court_number', { ascending: true }),
-      supabase.from('match_history').select('id,batch_id,match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes').order('played_at', { ascending: false }),
     ]);
+
+    let historyData: MatchHistoryRow[] | null = null;
+    let historyError: { code?: string } | null = null;
+
+    if (historyMatchIdColumnRef.current === 'original_match_id') {
+      const withOriginal = await supabase
+        .from('match_history')
+        .select('id,batch_id,original_match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes')
+        .order('played_at', { ascending: false });
+      historyData = (withOriginal.data as MatchHistoryRow[] | null) ?? null;
+      historyError = withOriginal.error as { code?: string } | null;
+
+      if (historyError?.code === '42703') {
+        historyMatchIdColumnRef.current = 'match_id';
+        const fallback = await supabase
+          .from('match_history')
+          .select('id,batch_id,match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes')
+          .order('played_at', { ascending: false });
+        historyData = (fallback.data as MatchHistoryRow[] | null) ?? null;
+        historyError = fallback.error as { code?: string } | null;
+      }
+    } else {
+      const withLegacy = await supabase
+        .from('match_history')
+        .select('id,batch_id,match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes')
+        .order('played_at', { ascending: false });
+      historyData = (withLegacy.data as MatchHistoryRow[] | null) ?? null;
+      historyError = withLegacy.error as { code?: string } | null;
+
+      if (historyError?.code === '42703') {
+        historyMatchIdColumnRef.current = 'original_match_id';
+        const fallback = await supabase
+          .from('match_history')
+          .select('id,batch_id,original_match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes')
+          .order('played_at', { ascending: false });
+        historyData = (fallback.data as MatchHistoryRow[] | null) ?? null;
+        historyError = fallback.error as { code?: string } | null;
+      }
+    }
 
     let matchesData: MatchRow[] | null = null;
     let matchesError: { code?: string } | null = null;
@@ -1167,9 +1215,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
     }
 
+    const historyMatchColumn = historyMatchIdColumnRef.current;
+
     await Promise.all([
       supabase.from('matches').delete().eq('id', matchId),
-      supabase.from('match_history').delete().eq('match_id', matchId),
+      supabase.from('match_history').delete().eq(historyMatchColumn, matchId),
       supabase.from('courts').update({
         status: 'free',
         current_match_id: null,
@@ -1325,11 +1375,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     const players = snapshot.batches[batchId].players;
     const toName = (id: string | null | undefined) => players.find((entry) => entry.id === id)?.name ?? null;
 
-    await supabase.from('match_history').delete().eq('match_id', matchId);
+    const historyMatchColumn = historyMatchIdColumnRef.current;
+
+    await supabase.from('match_history').delete().eq(historyMatchColumn, matchId);
 
     await supabase.from('match_history').insert({
       batch_id: withBatchDbId(batchId),
-      match_id: matchId,
+      [historyMatchColumn]: matchId,
       court_number: Number(court.label.replace('Court ', '')),
       team1_player1_name: toName(matchRow?.team1_player1_id),
       team1_player2_name: toName(matchRow?.team1_player2_id),
@@ -1352,6 +1404,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     const winner = scoreToWinner(scoreA, scoreB);
 
+    const historyMatchColumn = historyMatchIdColumnRef.current;
+
     await Promise.all([
       supabase.from('matches').update({
         score_team1: scoreA,
@@ -1362,7 +1416,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         score_team1: scoreA,
         score_team2: scoreB,
         winner_team: winner,
-      }).eq('match_id', matchId),
+      }).eq(historyMatchColumn, matchId),
       supabase.from('match_history').update({
         score_team1: scoreA,
         score_team2: scoreB,
