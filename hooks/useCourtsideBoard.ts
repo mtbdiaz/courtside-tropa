@@ -504,7 +504,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       supabase.from('batches').select('id,name,num_courts,created_at').order('created_at', { ascending: true }),
       supabase.from('players').select('id,batch_id,name,gender,status,pair_id,created_at').order('created_at', { ascending: true }),
       supabase.from('courts').select('id,batch_id,court_number,status,current_match_id,start_time').order('court_number', { ascending: true }),
-      supabase.from('matches').select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status,match_type'),
+      supabase.from('matches').select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status'),
       supabase.from('match_history').select('id,batch_id,match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes').order('played_at', { ascending: false }),
     ]);
 
@@ -940,7 +940,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         score_team1: 0,
         score_team2: 0,
         is_pair_match: false,
-        match_type: 'mixed',
       });
 
       const used = new Set([...next.teamA, ...next.teamB]);
@@ -1068,7 +1067,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         score_team1: 0,
         score_team2: 0,
         is_pair_match: mode === 'custom',
-        match_type: 'custom',
       };
 
       const { data: inserted } = await supabase.from('matches').insert(payload).select('id').single();
@@ -1367,7 +1365,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
     }
 
-    // INSERT CUSTOM MATCH with match_type = 'custom'
+    // INSERT CUSTOM MATCH
     await supabase.from('matches').insert({
       batch_id: dbBatchId,
       court_id: null,
@@ -1380,7 +1378,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       score_team1: 0,
       score_team2: 0,
       is_pair_match: false,
-      match_type: 'custom',
     });
 
     await loadFromDatabase();
