@@ -27,7 +27,7 @@ create table if not exists players (
   batch_id uuid references batches(id) on delete cascade,
   name text not null,
   gender text check (gender in ('M', 'F')) not null,
-  status text default 'checked-in' check (status in ('checked-in', 'break')),
+  status text default 'break' check (status in ('checked-in', 'break')),
   pair_id uuid,
   created_at timestamptz default now()
 );
@@ -132,65 +132,4 @@ create policy "Allow public read matches" on matches for select to anon, authent
 drop policy if exists "Allow public read history" on match_history;
 create policy "Allow public read history" on match_history for select to anon, authenticated using (true);
 
-insert into events (name, tagline, date, venue)
-values ('Courtside Tropa', 'Just One More Game… with Tropa 🏓🌅', 'May 1, 2026', 'Paddle Up! Davao (Buhangin)')
-on conflict do nothing;
-
-do $$
-declare
-  event_uuid uuid;
-begin
-  select id into event_uuid from events limit 1;
-
-  insert into batches (event_id, name, start_time, end_time, num_courts)
-  values
-    (event_uuid, 'Batch 1', '8:00 AM - 12:00 NN', '8:00 AM - 12:00 NN', 5),
-    (event_uuid, 'Batch 2', '1:00 PM - 5:00 PM', '1:00 PM - 5:00 PM', 5)
-  on conflict do nothing;
-end $$;
-
-do $$
-declare
-  batch_record record;
-begin
-  for batch_record in
-    select id, coalesce(num_courts, 5) as num_courts
-    from batches
-  loop
-    if not exists (select 1 from courts where batch_id = batch_record.id) then
-      insert into courts (batch_id, court_number, status)
-      select batch_record.id, gs, 'free'
-      from generate_series(1, batch_record.num_courts) as gs;
-    end if;
-  end loop;
-end $$;
-
-do $$
-declare
-  batch1 uuid;
-  batch2 uuid;
-begin
-  if not exists (select 1 from players) then
-    select id into batch1 from batches where name = 'Batch 1' limit 1;
-    select id into batch2 from batches where name = 'Batch 2' limit 1;
-
-    insert into players (batch_id, name, gender, status)
-    values
-      (batch1, 'Alex Santos', 'M', 'checked-in'),
-      (batch1, 'Bea Cruz', 'F', 'checked-in'),
-      (batch1, 'Chris Dela Cruz', 'M', 'checked-in'),
-      (batch1, 'Dana Reyes', 'F', 'checked-in'),
-      (batch1, 'Eli Navarro', 'M', 'checked-in'),
-      (batch1, 'Faith Gomez', 'F', 'checked-in'),
-      (batch1, 'Gabby Lim', 'M', 'checked-in'),
-      (batch1, 'Hana Torres', 'F', 'checked-in'),
-      (batch2, 'Ivan Flores', 'M', 'checked-in'),
-      (batch2, 'Jessa Morales', 'F', 'checked-in'),
-      (batch2, 'Kyle Tan', 'M', 'checked-in'),
-      (batch2, 'Lia Bautista', 'F', 'checked-in'),
-      (batch2, 'Miko Diaz', 'M', 'checked-in'),
-      (batch2, 'Nina Santos', 'F', 'checked-in'),
-      (batch2, 'Owen Garcia', 'M', 'checked-in'),
-      (batch2, 'Pia Lopez', 'F', 'checked-in');
-  end if;
-end $$;
+-- No seed data in this schema file.

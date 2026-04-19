@@ -472,6 +472,7 @@ function normalizeSnapshot(input: {
 export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const supabaseRef = useRef<ReturnType<typeof createSupabaseBrowserClient> | null>(null);
   const batchDbIdRef = useRef<Record<BatchId, string | null>>({ 1: null, 2: null });
+  const supportsMatchTypeRef = useRef(true);
 
   const [snapshot, setSnapshot] = useState(() => {
     const empty = createEmptyCourtsideSnapshot();
@@ -498,16 +499,39 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       { data: batchesData, error: batchesError },
       { data: playersData, error: playersError },
       { data: courtsData, error: courtsError },
-      { data: matchesData, error: matchesError },
       { data: historyData, error: historyError },
     ] = await Promise.all([
       supabase.auth.getSession(),
       supabase.from('batches').select('id,name,num_courts,created_at').order('created_at', { ascending: true }),
       supabase.from('players').select('id,batch_id,name,gender,status,pair_id,created_at').order('created_at', { ascending: true }),
       supabase.from('courts').select('id,batch_id,court_number,status,current_match_id,start_time').order('court_number', { ascending: true }),
-      supabase.from('matches').select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status'),
       supabase.from('match_history').select('id,batch_id,match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes').order('played_at', { ascending: false }),
     ]);
+
+    let matchesData: MatchRow[] | null = null;
+    let matchesError: { code?: string } | null = null;
+
+    if (supportsMatchTypeRef.current) {
+      const withType = await supabase
+        .from('matches')
+        .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status,match_type');
+      matchesData = (withType.data as MatchRow[] | null) ?? null;
+      matchesError = withType.error as { code?: string } | null;
+      if (matchesError?.code === '42703') {
+        supportsMatchTypeRef.current = false;
+        const fallback = await supabase
+          .from('matches')
+          .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status');
+        matchesData = (fallback.data as MatchRow[] | null) ?? null;
+        matchesError = fallback.error as { code?: string } | null;
+      }
+    } else {
+      const fallback = await supabase
+        .from('matches')
+        .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status');
+      matchesData = (fallback.data as MatchRow[] | null) ?? null;
+      matchesError = fallback.error as { code?: string } | null;
+    }
 
     if (batchesError || playersError || courtsError || matchesError || historyError) {
       setSyncStatus('offline');
@@ -698,7 +722,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       batch_id: dbBatchId,
       name: name.trim(),
       gender,
-      status: 'checked-in',
+      status: 'break',
       created_at: nowIso(),
     });
 
@@ -725,7 +749,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
           batch_id: dbBatchId,
           name: value,
           gender,
-          status: 'checked-in',
+          status: 'break',
           created_at: nowIso(),
         }))
     );
@@ -929,7 +953,20 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         break;
       }
 
-      await supabase.from('matches').insert({
+      const payload: {
+        batch_id: string;
+        court_id: null;
+        team1_player1_id: string;
+        team1_player2_id: string;
+        team2_player1_id: string;
+        team2_player2_id: string;
+        start_time: string;
+        status: 'active';
+        score_team1: number;
+        score_team2: number;
+        is_pair_match: false;
+        match_type?: 'mixed';
+      } = {
         batch_id: dbBatchId,
         court_id: null,
         team1_player1_id: next.teamA[0],
@@ -941,7 +978,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         score_team1: 0,
         score_team2: 0,
         is_pair_match: false,
-      });
+      };
+
+      if (supportsMatchTypeRef.current) {
+        payload.match_type = 'mixed';
+      }
+
+      await supabase.from('matches').insert(payload);
 
       const used = new Set([...next.teamA, ...next.teamB]);
       for (let i = available.length - 1; i >= 0; i -= 1) {
@@ -1056,7 +1099,20 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (selectedPlayers && selectedPlayers.playerIds.length === 4) {
-      const payload = {
+      const payload: {
+        batch_id: string;
+        court_id: string;
+        team1_player1_id: string | null;
+        team1_player2_id: string | null;
+        team2_player1_id: string | null;
+        team2_player2_id: string | null;
+        start_time: string;
+        status: 'active';
+        score_team1: number;
+        score_team2: number;
+        is_pair_match: boolean;
+        match_type?: 'custom';
+      } = {
         batch_id: dbBatchId,
         court_id: courtId,
         team1_player1_id: selectedPlayers.playerIds[0] ?? null,
@@ -1069,6 +1125,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         score_team2: 0,
         is_pair_match: mode === 'custom',
       };
+
+      if (supportsMatchTypeRef.current) {
+        payload.match_type = 'custom';
+      }
 
       const { data: inserted } = await supabase.from('matches').insert(payload).select('id').single();
       if (!inserted?.id) {
@@ -1367,7 +1427,20 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     // INSERT CUSTOM MATCH
-    await supabase.from('matches').insert({
+    const payload: {
+      batch_id: string;
+      court_id: null;
+      team1_player1_id: string;
+      team1_player2_id: string;
+      team2_player1_id: string;
+      team2_player2_id: string;
+      start_time: string;
+      status: 'active';
+      score_team1: number;
+      score_team2: number;
+      is_pair_match: false;
+      match_type?: 'custom';
+    } = {
       batch_id: dbBatchId,
       court_id: null,
       team1_player1_id: uniqueIds[0],
@@ -1379,7 +1452,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       score_team1: 0,
       score_team2: 0,
       is_pair_match: false,
-    });
+    };
+
+    if (supportsMatchTypeRef.current) {
+      payload.match_type = 'custom';
+    }
+
+    await supabase.from('matches').insert(payload);
 
     await loadFromDatabase();
   }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
