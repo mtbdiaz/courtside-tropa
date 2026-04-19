@@ -375,6 +375,7 @@ function normalizeSnapshot(input: {
     .sort((a, b) => a.court_number - b.court_number)
     .map((court) => {
       const liveMatch = court.current_match_id ? matchesById.get(court.current_match_id) : null;
+      const fallbackLive = court.status === 'occupied';
       const ids = liveMatch
         ? [liveMatch.team1_player1_id, liveMatch.team1_player2_id, liveMatch.team2_player1_id, liveMatch.team2_player2_id].filter(Boolean) as string[]
         : [];
@@ -385,8 +386,8 @@ function normalizeSnapshot(input: {
       return {
         id: court.id,
         label: `Court ${court.court_number}`,
-        status: liveMatch ? ('live' as const) : ('idle' as const),
-        matchId: liveMatch?.id ?? null,
+        status: liveMatch || fallbackLive ? ('live' as const) : ('idle' as const),
+        matchId: liveMatch?.id ?? court.current_match_id,
         mode: liveMatch
           ? modeFromPlayers(ids.map((id) => playersById.get(id)?.gender ?? 'M'))
           : null,
