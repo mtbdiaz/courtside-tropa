@@ -94,6 +94,7 @@ export interface BatchSnapshot {
   players: Player[];
   pairs: Pair[];
   queueOrder: string[];
+  queuedMatches: MatchPreview[];
   courts: CourtSlot[];
   history: MatchRecord[];
   lastUpdated: string;

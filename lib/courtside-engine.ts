@@ -51,6 +51,7 @@ export function createEmptyBatchSnapshot(batchId: BatchId): BatchSnapshot {
     players: [],
     pairs: [],
     queueOrder: [],
+    queuedMatches: [],
     courts: buildCourts(DEFAULT_COURT_COUNT),
     history: [],
     lastUpdated: now(),

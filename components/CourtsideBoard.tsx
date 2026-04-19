@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BatchId } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
-import { getLeaderboardEntries, previewUpcomingMatches } from '@/lib/courtside-engine';
+import { getLeaderboardEntries } from '@/lib/courtside-engine';
 import { LogOut, Search, Trophy } from 'lucide-react';
 
 function formatTimer(startedAt: string | null, nowMs: number) {
@@ -22,12 +22,6 @@ function formatTimer(startedAt: string | null, nowMs: number) {
 }
 
 type BoardMode = 'admin' | 'public' | 'score';
-
-interface CustomQueuedGame {
-  id: string;
-  playerIds: [string, string, string, string];
-  createdAtMs: number;
-}
 
 export default function CourtsideBoard({
   initialBatchId = 1,
@@ -50,13 +44,15 @@ export default function CourtsideBoard({
     addBulk,
     updatePlayer,
     deletePlayer,
-    prioritizePlayersForQueue,
     toggleBreak,
     lockSelectedPair,
     unlockSelectedPair,
     moveQueueUnit,
     removeQueueMatch,
     refreshQueueProcess,
+    ensureReadyMatches,
+    enqueueCustomMatch,
+    startQueuedMatchOnCourt,
     startMatchOnCourt,
     completeMatch,
     cancelMatch,
@@ -78,7 +74,6 @@ export default function CourtsideBoard({
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
   const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
-  const [customQueuedByBatch, setCustomQueuedByBatch] = useState<Record<BatchId, CustomQueuedGame[]>>({ 1: [], 2: [] });
   const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
   const autoFillRunningRef = useRef(false);
 
@@ -180,56 +175,33 @@ export default function CourtsideBoard({
     return getLeaderboardEntries(activeBatch);
   }, [activeBatch]);
 
-  const customQueuedMatches = useMemo(() => {
-    const playerById = new Map(activeBatch.players.map((player) => [player.id, player]));
-    const livePlayerIds = activePlayers;
-
-    return (customQueuedByBatch[activeBatch.batchId] ?? [])
-      .filter((game) =>
-        game.playerIds.every((id) => {
-          const player = playerById.get(id);
-          return Boolean(player && player.status === 'checked-in' && !livePlayerIds.has(id));
-        }),
-      )
-      .sort((a, b) => a.createdAtMs - b.createdAtMs)
-      .map((game, index) => ({
-        id: game.id,
-        courtId: game.id,
-        courtLabel: `Custom ${index + 1}`,
-        teamA: [playerById.get(game.playerIds[0])?.name ?? '-', playerById.get(game.playerIds[1])?.name ?? '-'],
-        teamB: [playerById.get(game.playerIds[2])?.name ?? '-', playerById.get(game.playerIds[3])?.name ?? '-'],
-        playerIds: [...game.playerIds],
-        sourceUnitIds: [...game.playerIds],
-        mode: 'custom' as const,
-      }));
-  }, [activeBatch.batchId, activeBatch.players, activePlayers, customQueuedByBatch]);
-
-  const mixedUpcomingMatches = useMemo(() => {
-    const reservedPlayerIds = new Set(customQueuedMatches.flatMap((match) => match.playerIds));
-    return previewUpcomingMatches(activeBatch, activeBatch.activeMode, 999).filter(
-      (match) => !match.playerIds.some((id) => reservedPlayerIds.has(id)),
-    );
-  }, [activeBatch, customQueuedMatches]);
-
-  const upcomingMatches = useMemo(() => {
-    const visibleMixed = mixedUpcomingMatches.slice(0, 7);
-    return [...visibleMixed, ...customQueuedMatches];
-  }, [customQueuedMatches, mixedUpcomingMatches]);
+  const upcomingMatches = activeBatch.queuedMatches;
 
   const queuePaused = queuePausedByBatch[activeBatch.batchId];
   const autoFillEnabled = autoFillEnabledByBatch[activeBatch.batchId];
 
   useEffect(() => {
-    if (publicView || scoreOnly || queuePaused || !autoFillEnabled) {
+    if (publicView || scoreOnly || queuePaused) {
+      return;
+    }
+
+    void ensureReadyMatches(activeBatch.batchId, 6);
+    const generationId = window.setInterval(() => {
+      void ensureReadyMatches(activeBatch.batchId, 6);
+    }, 5000);
+
+    return () => {
+      window.clearInterval(generationId);
+    };
+  }, [activeBatch.batchId, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
+
+  useEffect(() => {
+    if (publicView || scoreOnly || !autoFillEnabled) {
       return;
     }
 
     const intervalId = window.setInterval(() => {
       if (autoFillRunningRef.current) {
-        return;
-      }
-
-      if (mixedUpcomingMatches.length > 5) {
         return;
       }
 
@@ -242,7 +214,7 @@ export default function CourtsideBoard({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, mixedUpcomingMatches.length, publicView, queuePaused, scoreOnly]);
+  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, publicView, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -263,73 +235,22 @@ export default function CourtsideBoard({
     });
   };
 
-  const handleAddCustomToQueue = async () => {
+  const handleAddCustomToQueue = async (placement: 'top' | 'bottom') => {
     if (customSelection.length !== 4) {
       return;
     }
 
-    const nextCustom: CustomQueuedGame = {
-      id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      playerIds: [customSelection[0], customSelection[1], customSelection[2], customSelection[3]],
-      createdAtMs: Date.now(),
-    };
-
-    setCustomQueuedByBatch((current) => {
-      const currentGames = current[activeBatch.batchId] ?? [];
-      const selected = new Set(nextCustom.playerIds);
-      const filtered = currentGames.filter((game) => !game.playerIds.some((id) => selected.has(id)));
-      return {
-        ...current,
-        [activeBatch.batchId]: [...filtered, nextCustom],
-      };
-    });
-
-    await prioritizePlayersForQueue(activeBatch.batchId, customSelection);
+    await enqueueCustomMatch(activeBatch.batchId, customSelection, placement);
     setCustomSelection([]);
     setCustomSearch('');
   };
 
   const handleDeleteQueueMatch = async (sourceUnitIds: string[]) => {
-    const sourceSet = new Set(sourceUnitIds);
-    setCustomQueuedByBatch((current) => ({
-      ...current,
-      [activeBatch.batchId]: (current[activeBatch.batchId] ?? []).filter(
-        (game) => !game.playerIds.some((id) => sourceSet.has(id)),
-      ),
-    }));
-
     await removeQueueMatch(activeBatch.batchId, sourceUnitIds);
   };
 
-  const handlePlaceQueueOnCourt = async (courtId: string, sourceUnitIds: string[], mode: 'mixed' | 'custom') => {
-    const pairById = new Map(activeBatch.pairs.map((pair) => [pair.id, pair]));
-    const selectedPlayerIds: string[] = [];
-
-    for (const unitId of sourceUnitIds) {
-      const pair = pairById.get(unitId);
-      if (pair) {
-        selectedPlayerIds.push(...pair.playerIds);
-      } else {
-        selectedPlayerIds.push(unitId);
-      }
-    }
-
-    const deduped = Array.from(new Set(selectedPlayerIds)).slice(0, 4);
-    if (deduped.length !== 4) {
-      return;
-    }
-
-    await startMatchOnCourt(activeBatch.batchId, courtId, 'custom', { playerIds: deduped });
-
-    if (mode === 'custom') {
-      const sourceSet = new Set(sourceUnitIds);
-      setCustomQueuedByBatch((current) => ({
-        ...current,
-        [activeBatch.batchId]: (current[activeBatch.batchId] ?? []).filter(
-          (game) => !game.playerIds.some((id) => sourceSet.has(id)),
-        ),
-      }));
-    }
+  const handlePlaceQueueOnCourt = async (courtId: string, matchId: string) => {
+    await startQueuedMatchOnCourt(activeBatch.batchId, courtId, matchId);
   };
 
   const handleAddPlayer = () => {
@@ -905,7 +826,7 @@ export default function CourtsideBoard({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <div className="mt-1 text-xs text-slate-300/80">Showing 5 to 7 mixed matches, plus custom queue games</div>
+                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 6 when not paused.</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -949,9 +870,8 @@ export default function CourtsideBoard({
                 </button>
                 <button
                   type="button"
-                  disabled={queuePaused}
                   onClick={() => fillIdleCourts(activeBatch.batchId)}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
                   Auto-fill courts
                 </button>
@@ -968,9 +888,9 @@ export default function CourtsideBoard({
                       <span className="font-medium text-white">{match.courtLabel}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.sourceUnitIds[0], 'up')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↑</button>
-                      <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.sourceUnitIds[0], 'down')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↓</button>
-                      <button type="button" onClick={() => handleDeleteQueueMatch(match.sourceUnitIds)} className="rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-100">Delete</button>
+                      <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.id, 'up')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↑</button>
+                      <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.id, 'down')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↓</button>
+                      <button type="button" onClick={() => handleDeleteQueueMatch([match.id])} className="rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-100">Delete</button>
                       <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed' : 'Custom'}</span>
                     </div>
                   </div>
@@ -985,7 +905,7 @@ export default function CourtsideBoard({
                         <button
                           key={`${match.id}-${court.id}`}
                           type="button"
-                          onClick={() => handlePlaceQueueOnCourt(court.id, match.sourceUnitIds, match.mode)}
+                          onClick={() => handlePlaceQueueOnCourt(court.id, match.id)}
                           className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-100"
                         >
                           {court.label}
@@ -1310,10 +1230,18 @@ export default function CourtsideBoard({
               <button
                 type="button"
                 disabled={customSelection.length !== 4}
-                onClick={handleAddCustomToQueue}
+                onClick={() => handleAddCustomToQueue('top')}
                 className="rounded-2xl bg-gradient-to-r from-orange-500 to-pink-500 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Add to Queue
+                Add to Top
+              </button>
+              <button
+                type="button"
+                disabled={customSelection.length !== 4}
+                onClick={() => handleAddCustomToQueue('bottom')}
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Add to Bottom
               </button>
             </div>
           </article>
