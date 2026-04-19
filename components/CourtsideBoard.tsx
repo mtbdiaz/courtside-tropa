@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import type { MatchPreview } from '@/types/courtside';
 import { BatchId } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
-import { getLeaderboardEntries, previewUpcomingMatches } from '@/lib/courtside-engine';
-import { CircleOff, LogOut, Plus, Search, Waves } from 'lucide-react';
+import { getLeaderboardEntries, previewUpcomingMatches, resolveQueueUnits } from '@/lib/courtside-engine';
+import { LogOut, Search, Trophy, Waves } from 'lucide-react';
 
 function formatTimer(startedAt: string | null, nowMs: number) {
   if (!startedAt) {
@@ -21,8 +22,18 @@ function formatTimer(startedAt: string | null, nowMs: number) {
   return `${minutes}:${seconds}`;
 }
 
-export default function CourtsideBoard({ publicView = false, initialBatchId = 1 }: { publicView?: boolean; initialBatchId?: BatchId }) {
+type BoardMode = 'admin' | 'public' | 'score';
+
+export default function CourtsideBoard({
+  initialBatchId = 1,
+  mode = 'admin',
+}: {
+  initialBatchId?: BatchId;
+  mode?: BoardMode;
+}) {
   const router = useRouter();
+  const publicView = mode === 'public';
+  const scoreOnly = mode === 'score';
   const {
     activeBatch,
     isReady,
@@ -33,6 +44,8 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
     addSinglePlayer,
     addBulk,
     updatePlayer,
+    deletePlayer,
+    prioritizePlayersForQueue,
     toggleBreak,
     lockSelectedPair,
     unlockSelectedPair,
@@ -53,9 +66,11 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
   const [customSelection, setCustomSelection] = useState<string[]>([]);
   const [scoreDrafts, setScoreDrafts] = useState<Record<string, { a: string; b: string }>>({});
   const [pairSelection, setPairSelection] = useState<string[]>([]);
+  const [pairSearch, setPairSearch] = useState('');
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
+  const [readyQueueByBatch, setReadyQueueByBatch] = useState<Record<BatchId, MatchPreview[]>>({ 1: [], 2: [] });
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -82,9 +97,9 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
 
   const availableForCustom = useMemo(
     () =>
-      activeBatch.players.filter(
-        (player) => player.status === 'checked-in' && !activePlayers.has(player.id),
-      ).sort((a, b) => a.name.localeCompare(b.name)),
+      activeBatch.players
+        .filter((player) => player.status === 'checked-in' && !activePlayers.has(player.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [activeBatch.players, activePlayers],
   );
 
@@ -101,8 +116,26 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
 
     return availableForCustom
       .filter((player) => player.name.toLowerCase().includes(query))
-      .slice(0, 8);
+      .slice(0, 10);
   }, [availableForCustom, customSearch]);
+
+  const pairSearchResults = useMemo(() => {
+    const query = pairSearch.trim().toLowerCase();
+    if (!query) {
+      return [];
+    }
+
+    return activeBatch.players
+      .filter(
+        (player) =>
+          player.status === 'checked-in' &&
+          !player.pairId &&
+          !activePlayers.has(player.id) &&
+          player.name.toLowerCase().includes(query),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 12);
+  }, [activeBatch.players, activePlayers, pairSearch]);
 
   const liveCourts = useMemo(
     () => activeBatch.courts.filter((court) => court.status === 'live'),
@@ -110,7 +143,7 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
   );
 
   const breakPlayers = useMemo(
-    () => activeBatch.players.filter((player) => player.status === 'break'),
+    () => activeBatch.players.filter((player) => player.status === 'break').sort((a, b) => a.name.localeCompare(b.name)),
     [activeBatch.players],
   );
 
@@ -132,7 +165,66 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
     return getLeaderboardEntries(activeBatch);
   }, [activeBatch]);
 
-  const upcomingMatches = useMemo(() => previewUpcomingMatches(activeBatch, activeBatch.activeMode, 6), [activeBatch]);
+  const generatedUpcomingMatches = useMemo(() => previewUpcomingMatches(activeBatch, activeBatch.activeMode, 14), [activeBatch]);
+
+  useEffect(() => {
+    const makeSignature = (match: MatchPreview) => {
+      const sortedUnits = [...match.sourceUnitIds].sort().join('|');
+      return `${sortedUnits}::${match.teamA.join('|')}::${match.teamB.join('|')}`;
+    };
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setReadyQueueByBatch((current) => {
+      const existing = current[activeBatch.batchId] ?? [];
+      const freshBySignature = new Map(generatedUpcomingMatches.map((match) => [makeSignature(match), match]));
+
+      const surviving = existing
+        .map((match) => freshBySignature.get(makeSignature(match)))
+        .filter(Boolean) as MatchPreview[];
+
+      const nextReady = surviving.slice(0, 7);
+
+      if (nextReady.length <= 5) {
+        const used = new Set(nextReady.map((match) => makeSignature(match)));
+        for (const match of generatedUpcomingMatches) {
+          const signature = makeSignature(match);
+          if (used.has(signature)) {
+            continue;
+          }
+          nextReady.push(match);
+          used.add(signature);
+          if (nextReady.length === 7) {
+            break;
+          }
+        }
+      }
+
+      const existingSignatures = existing.map((match) => makeSignature(match)).join('||');
+      const nextSignatures = nextReady.map((match) => makeSignature(match)).join('||');
+      if (existingSignatures === nextSignatures) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [activeBatch.batchId]: nextReady,
+      };
+    });
+  }, [activeBatch.batchId, generatedUpcomingMatches]);
+
+  const upcomingMatches = useMemo(() => {
+    const cached = readyQueueByBatch[activeBatch.batchId] ?? [];
+    if (cached.length > 0) {
+      return cached;
+    }
+
+    return generatedUpcomingMatches.slice(0, 7);
+  }, [activeBatch.batchId, generatedUpcomingMatches, readyQueueByBatch]);
+
+  const reserveQueueUnits = useMemo(() => {
+    const used = new Set(upcomingMatches.flatMap((match) => match.sourceUnitIds));
+    return resolveQueueUnits(activeBatch).filter((unit) => !used.has(unit.id));
+  }, [activeBatch, upcomingMatches]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -153,12 +245,12 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
     });
   };
 
-  const handleCustomStart = (courtId: string) => {
+  const handleAddCustomToQueue = async () => {
     if (customSelection.length !== 4) {
       return;
     }
 
-    startMatchOnCourt(activeBatch.batchId, courtId, 'custom', { playerIds: customSelection });
+    await prioritizePlayersForQueue(activeBatch.batchId, customSelection);
     setCustomSelection([]);
     setCustomSearch('');
   };
@@ -207,6 +299,21 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
     setEditName('');
   };
 
+  const handleDeletePlayer = async () => {
+    if (!editingPlayerId) {
+      return;
+    }
+
+    const shouldDelete = window.confirm('Delete this player from the batch?');
+    if (!shouldDelete) {
+      return;
+    }
+
+    await deletePlayer(activeBatch.batchId, editingPlayerId);
+    setEditingPlayerId(null);
+    setEditName('');
+  };
+
   const handlePairSelected = async () => {
     if (pairSelection.length !== 2) {
       return;
@@ -214,6 +321,7 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
 
     await lockSelectedPair(activeBatch.batchId, pairSelection[0], pairSelection[1]);
     setPairSelection([]);
+    setPairSearch('');
   };
 
   const togglePairSelection = (playerId: string) => {
@@ -249,6 +357,14 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
   }
 
   if (publicView) {
+    const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle');
+    const nextMatch = upcomingMatches[0];
+    const announcement = nextOpenCourt && nextMatch
+      ? `Next up on ${nextOpenCourt.label}: ${nextMatch.teamA.join(' + ')} vs ${nextMatch.teamB.join(' + ')}`
+      : nextMatch
+        ? `Next ready match: ${nextMatch.teamA.join(' + ')} vs ${nextMatch.teamB.join(' + ')}`
+        : 'No ready matches yet';
+
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
         <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
@@ -274,6 +390,10 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
               ))}
             </div>
           </div>
+        </section>
+
+        <section className="rounded-[2rem] border border-amber-300/30 bg-gradient-to-r from-amber-300/20 via-orange-300/20 to-rose-300/20 px-5 py-4 text-sm font-medium text-amber-50">
+          {announcement}
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
@@ -334,20 +454,136 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
         </section>
 
         <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
-          <h3 className="text-xl font-semibold text-white">Leaderboard</h3>
+          <div className="flex items-center gap-3">
+            <Trophy className="h-5 w-5 text-amber-300" />
+            <h3 className="text-xl font-semibold text-white">Leaderboard</h3>
+          </div>
           <div className="mt-4 space-y-2">
             {leaderboard.length === 0 ? (
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No completed matches yet.</div>
             ) : null}
-            {leaderboard.map((entry) => (
-              <div key={entry.playerId} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
+            {leaderboard.map((entry, index) => (
+              <div
+                key={entry.playerId}
+                className={`flex items-center justify-between rounded-2xl border p-3 text-sm transition ${
+                  index === 0
+                    ? 'animate-pulse border-amber-300/45 bg-amber-300/20'
+                    : index === 1
+                      ? 'border-slate-300/35 bg-slate-200/10'
+                      : index === 2
+                        ? 'border-orange-300/35 bg-orange-300/10'
+                        : 'border-white/10 bg-white/5'
+                }`}
+              >
                 <div className="flex items-center gap-3">
                   <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{entry.rank}</span>
                   <span className="font-medium text-white">{entry.name}</span>
                 </div>
-                <span className="text-slate-300/80">{entry.wins} wins • {entry.gamesPlayed} games</span>
+                <span className="text-slate-300/80">{entry.wins} wins - {entry.gamesPlayed} games</span>
               </div>
             ))}
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (scoreOnly) {
+    return (
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
+        <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">Score Game</p>
+              <h2 className="text-display mt-2 text-3xl font-semibold sm:text-4xl">Active Courts</h2>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {[1, 2].map((batchId) => (
+                <button
+                  key={batchId}
+                  type="button"
+                  onClick={() => setActiveBatchId(batchId as BatchId)}
+                  className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                    activeBatch.batchId === batchId
+                      ? 'border-amber-300/50 bg-amber-300/15 text-amber-100'
+                      : 'border-white/10 bg-white/5 text-slate-200/80 hover:bg-white/10'
+                  }`}
+                >
+                  Batch {batchId}
+                </button>
+              ))}
+              <Link href="/dashboard" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
+                Back to dashboard
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
+          <div className="space-y-4">
+            {liveCourts.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No active courts right now.</div> : null}
+            {liveCourts.map((court) => {
+              const draft = scoreDrafts[court.id] ?? { a: '', b: '' };
+              return (
+                <div key={court.id} className="rounded-2xl border border-orange-300/30 bg-orange-400/8 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-semibold text-white">{court.label}</div>
+                    <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
+                      {formatTimer(court.startedAt, nowMs)}
+                    </div>
+                  </div>
+                  <div className="mt-3 text-sm text-slate-200/90">Team A: {court.teamA.join(', ')}</div>
+                  <div className="mt-1 text-sm text-slate-200/90">Team B: {court.teamB.join(', ')}</div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                    <input
+                      type="number"
+                      min="0"
+                      value={draft.a}
+                      onChange={(event) =>
+                        setScoreDrafts((current) => ({
+                          ...current,
+                          [court.id]: { ...(current[court.id] ?? { a: '', b: '' }), a: event.target.value },
+                        }))
+                      }
+                      placeholder="Score A"
+                      className="glass-input rounded-2xl px-4 py-3"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      value={draft.b}
+                      onChange={(event) =>
+                        setScoreDrafts((current) => ({
+                          ...current,
+                          [court.id]: { ...(current[court.id] ?? { a: '', b: '' }), b: event.target.value },
+                        }))
+                      }
+                      placeholder="Score B"
+                      className="glass-input rounded-2xl px-4 py-3"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const scoreA = Number(draft.a);
+                        const scoreB = Number(draft.b);
+                        if (Number.isNaN(scoreA) || Number.isNaN(scoreB)) {
+                          return;
+                        }
+                        completeMatch(activeBatch.batchId, court.id, scoreA, scoreB);
+                        setScoreDrafts((current) => {
+                          const next = { ...current };
+                          delete next[court.id];
+                          return next;
+                        });
+                      }}
+                      className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950"
+                    >
+                      Save score
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       </main>
@@ -377,13 +613,9 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
                 Batch {batchId}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => fillIdleCourts(activeBatch.batchId)}
-              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
-            >
-              Auto-fill courts
-            </button>
+            <Link href="/dashboard/score" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
+              Score Game
+            </Link>
             <Link href="/dashboard/history" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
               Match history
             </Link>
@@ -410,11 +642,7 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
       <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-6">
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-xl font-semibold text-white">Player Intake</h3>
-              </div>
-            </div>
+            <h3 className="text-xl font-semibold text-white">Add Player/s</h3>
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <label className="text-sm text-slate-200/90">Single player</label>
@@ -491,97 +719,73 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
 
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-xl font-semibold text-white">Players</h3>
-              <span className="text-xs text-slate-300/80">M / F</span>
+              <h3 className="text-xl font-semibold text-white">Pairings</h3>
+              <span className="text-xs text-slate-300/80">{pairSelection.length}/2 selected</span>
             </div>
 
-            <div className="mt-4 grid gap-3">
-              {sortedPlayers.map((player) => {
-                const isEditing = editingPlayerId === player.id;
-                const selectedPair = pairSelection.includes(player.id);
-                const isPaired = Boolean(player.pairId);
+            <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <label className="text-xs uppercase tracking-[0.2em] text-slate-300/80">Search players</label>
+              <div className="relative mt-2">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-amber-200" />
+                <input
+                  value={pairSearch}
+                  onChange={(event) => setPairSearch(event.target.value)}
+                  placeholder="Type a name"
+                  className="glass-input w-full rounded-2xl px-10 py-3 text-sm"
+                />
+              </div>
+            </div>
 
+            <div className="mt-3 space-y-2 max-h-48 overflow-auto pr-1">
+              {pairSearch.trim() !== '' && pairSearchResults.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300/80">No matching checked-in players.</div>
+              ) : null}
+              {pairSearchResults.map((player) => {
+                const selected = pairSelection.includes(player.id);
                 return (
-                  <div key={player.id} className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                    {isEditing ? (
-                      <div className="grid gap-3 sm:grid-cols-[1fr_100px_auto] sm:items-center">
-                        <input
-                          value={editName}
-                          onChange={(event) => setEditName(event.target.value)}
-                          className="glass-input rounded-2xl px-4 py-3 text-sm"
-                        />
-                        <div className="flex gap-2">
-                          {(['M', 'F'] as const).map((gender) => (
-                            <button
-                              key={gender}
-                              type="button"
-                              onClick={() => setEditGender(gender)}
-                              className={`flex-1 rounded-2xl border px-3 py-3 text-sm font-medium transition ${
-                                editGender === gender
-                                  ? 'border-amber-300/50 bg-amber-300/15 text-amber-100'
-                                  : 'border-white/10 bg-white/5 text-slate-200/80'
-                              }`}
-                            >
-                              {gender}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="flex gap-2">
-                          <button type="button" onClick={savePlayerEdit} className="rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-950">
-                            Save
-                          </button>
-                          <button type="button" onClick={() => setEditingPlayerId(null)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-100/90">
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <button type="button" onClick={() => togglePairSelection(player.id)} className={`rounded-full border px-3 py-1 text-xs font-semibold ${selectedPair ? 'border-amber-300/50 bg-amber-300/15 text-amber-100' : 'border-white/10 bg-black/20 text-slate-100/90'} ${isPaired ? 'opacity-50' : ''}`} disabled={isPaired}>
-                          {player.gender}
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium text-white">{player.name}</div>
-                          <div className="text-xs text-slate-300/80">{player.status}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => toggleBreak(activeBatch.batchId, player.id)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90">
-                            {player.status === 'break' ? 'Return' : 'Break'}
-                          </button>
-                          <button type="button" onClick={() => beginEditPlayer(player.id)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90">
-                            Edit
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    key={player.id}
+                    type="button"
+                    onClick={() => togglePairSelection(player.id)}
+                    className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                      selected
+                        ? 'border-amber-300/50 bg-amber-300/15 text-amber-100'
+                        : 'border-white/10 bg-white/5 text-slate-100/90'
+                    }`}
+                  >
+                    <div className="font-medium">{player.name}</div>
+                    <div className="text-xs opacity-80">{player.gender}</div>
+                  </button>
                 );
               })}
             </div>
 
             <div className="mt-4 flex items-center gap-3">
               <button type="button" onClick={handlePairSelected} disabled={pairSelection.length !== 2} className="rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-4 py-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
-                Lock pair
+                Make pair
               </button>
               <button type="button" onClick={() => setPairSelection([])} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-100/90">
                 Clear
               </button>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {activeBatch.pairs.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80 sm:col-span-2">No pairs.</div> : null}
-              {activeBatch.pairs.map((pair) => {
-                const firstName = activeBatch.players.find((player) => player.id === pair.playerIds[0])?.name ?? 'Player';
-                const secondName = activeBatch.players.find((player) => player.id === pair.playerIds[1])?.name ?? 'Player';
-                return (
-                  <div key={pair.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
-                    <span className="font-medium text-white">{firstName} + {secondName}</span>
-                    <button type="button" onClick={() => unlockSelectedPair(activeBatch.batchId, pair.id)} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
-                      Unlock
-                    </button>
-                  </div>
-                );
-              })}
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <h4 className="text-sm font-semibold text-amber-100">Pairs made</h4>
+              <div className="mt-2 space-y-2 max-h-40 overflow-auto pr-1">
+                {activeBatch.pairs.length === 0 ? <div className="text-sm text-slate-300/80">No pairs.</div> : null}
+                {activeBatch.pairs.map((pair) => {
+                  const firstName = activeBatch.players.find((player) => player.id === pair.playerIds[0])?.name ?? 'Player';
+                  const secondName = activeBatch.players.find((player) => player.id === pair.playerIds[1])?.name ?? 'Player';
+                  return (
+                    <div key={pair.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
+                      <span className="font-medium text-white">{firstName} + {secondName}</span>
+                      <button type="button" onClick={() => unlockSelectedPair(activeBatch.batchId, pair.id)} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
+                        Unpair
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </article>
 
@@ -589,8 +793,15 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
+                <div className="mt-1 text-xs text-slate-300/80">Showing up to 7 ready matches</div>
               </div>
-              <span className="text-xs text-slate-300/80">{upcomingMatches.length}</span>
+              <button
+                type="button"
+                onClick={() => fillIdleCourts(activeBatch.batchId)}
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
+              >
+                Auto-fill courts
+              </button>
             </div>
             <div className="mt-4 space-y-3">
               {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">Queue is empty.</div> : null}
@@ -615,6 +826,15 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
                 </div>
               ))}
             </div>
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <h4 className="text-sm font-semibold text-amber-100">Reserve waiting players/pairs</h4>
+              <div className="mt-2 max-h-36 space-y-2 overflow-auto pr-1">
+                {reserveQueueUnits.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
+                {reserveQueueUnits.map((unit) => (
+                  <div key={unit.id} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100/90">{unit.label}</div>
+                ))}
+              </div>
+            </div>
           </article>
 
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
@@ -629,7 +849,7 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
                   onClick={() => setCourtCount(activeBatch.batchId, activeBatch.courtCount - 1)}
                   className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <CircleOff className="h-4 w-4" />
+                  -
                 </button>
                 <span className="text-sm text-slate-200/90">{activeBatch.courtCount} courts</span>
                 <button
@@ -637,7 +857,7 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
                   onClick={() => setCourtCount(activeBatch.batchId, activeBatch.courtCount + 1)}
                   className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-100/90"
                 >
-                  <Plus className="h-4 w-4" />
+                  +
                 </button>
               </div>
             </div>
@@ -731,6 +951,130 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
 
         <div className="space-y-6">
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
+            <h3 className="text-xl font-semibold text-white">Player Status</h3>
+
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold text-amber-100">Currently Playing</h4>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {playingPlayers.length === 0 ? <span className="text-sm text-slate-300/80">None</span> : null}
+                {playingPlayers.map((name) => (
+                  <span key={name} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-100/90">
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <h4 className="text-sm font-semibold text-amber-100">On Break</h4>
+              <div className="mt-2 max-h-48 space-y-2 overflow-auto pr-1">
+                {breakPlayers.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
+                {breakPlayers.map((player) => (
+                  <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                    <span className="text-white">{player.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleBreak(activeBatch.batchId, player.id)}
+                      className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
+                    >
+                      Return
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <h4 className="text-sm font-semibold text-amber-100">Available Players</h4>
+              <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
+                {availableForCustom.map((player) => (
+                  <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                    <span className="text-white">{player.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleBreak(activeBatch.batchId, player.id)}
+                      className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
+                    >
+                      Break
+                    </button>
+                  </div>
+                ))}
+                {availableForCustom.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
+              </div>
+            </div>
+          </article>
+
+          <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xl font-semibold text-white">Players</h3>
+              <span className="text-xs text-slate-300/80">M / F</span>
+            </div>
+
+            <div className="mt-4 max-h-[32rem] space-y-3 overflow-auto pr-1">
+              {sortedPlayers.map((player) => {
+                const isEditing = editingPlayerId === player.id;
+
+                return (
+                  <div key={player.id} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                    {isEditing ? (
+                      <div className="grid gap-3 sm:grid-cols-[1fr_100px_auto] sm:items-center">
+                        <input
+                          value={editName}
+                          onChange={(event) => setEditName(event.target.value)}
+                          className="glass-input rounded-2xl px-4 py-3 text-sm"
+                        />
+                        <div className="flex gap-2">
+                          {(['M', 'F'] as const).map((gender) => (
+                            <button
+                              key={gender}
+                              type="button"
+                              onClick={() => setEditGender(gender)}
+                              className={`flex-1 rounded-2xl border px-3 py-3 text-sm font-medium transition ${
+                                editGender === gender
+                                  ? 'border-amber-300/50 bg-amber-300/15 text-amber-100'
+                                  : 'border-white/10 bg-white/5 text-slate-200/80'
+                              }`}
+                            >
+                              {gender}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={savePlayerEdit} className="rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-950">
+                            Save
+                          </button>
+                          <button type="button" onClick={() => setEditingPlayerId(null)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-100/90">
+                            Cancel
+                          </button>
+                          <button type="button" onClick={handleDeletePlayer} className="rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-sm font-medium text-rose-100">
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-slate-100/90">{player.gender}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium text-white">{player.name}</div>
+                          <div className="text-xs text-slate-300/80">{player.status}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => toggleBreak(activeBatch.batchId, player.id)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90">
+                            {player.status === 'break' ? 'Return' : 'Break'}
+                          </button>
+                          <button type="button" onClick={() => beginEditPlayer(player.id)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90">
+                            Edit
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+
+          <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Custom Match</h3>
@@ -771,7 +1115,7 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
               {customSelection.length === 0 ? <span className="text-xs text-slate-400/80">No players selected</span> : null}
             </div>
 
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 space-y-2 max-h-56 overflow-auto pr-1">
               {customSearch.trim() !== '' && customSearchResults.length === 0 ? (
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300/80">No matching checked-in players.</div>
               ) : null}
@@ -797,77 +1141,14 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
 
             <div className="mt-4 text-xs text-slate-300/80">{customSelection.length}/4 selected</div>
             <div className="mt-3 flex flex-wrap items-center gap-3">
-              {activeBatch.courts
-                .filter((court) => court.status === 'idle')
-                .slice(0, 3)
-                .map((court) => (
-                  <button
-                    key={court.id}
-                    type="button"
-                    disabled={customSelection.length !== 4}
-                    onClick={() => handleCustomStart(court.id)}
-                    className="rounded-2xl bg-gradient-to-r from-orange-500 to-pink-500 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Start on {court.label}
-                  </button>
-                ))}
-              {activeBatch.courts.every((court) => court.status !== 'idle') ? (
-                <span className="text-xs text-slate-400/80">No idle courts available.</span>
-              ) : null}
-            </div>
-          </article>
-
-          <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
-            <h3 className="text-xl font-semibold text-white">Player Status</h3>
-
-            <div className="mt-4">
-              <h4 className="text-sm font-semibold text-amber-100">Currently Playing</h4>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {playingPlayers.length === 0 ? <span className="text-sm text-slate-300/80">None</span> : null}
-                {playingPlayers.map((name) => (
-                  <span key={name} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-100/90">
-                    {name}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5">
-              <h4 className="text-sm font-semibold text-amber-100">On Break</h4>
-              <div className="mt-2 space-y-2">
-                {breakPlayers.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
-                {breakPlayers.map((player) => (
-                  <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                    <span className="text-white">{player.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => toggleBreak(activeBatch.batchId, player.id)}
-                      className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
-                    >
-                      Return
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5">
-              <h4 className="text-sm font-semibold text-amber-100">Available Players</h4>
-              <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
-                {availableForCustom.map((player) => (
-                  <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                    <span className="text-white">{player.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => toggleBreak(activeBatch.batchId, player.id)}
-                      className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
-                    >
-                      Break
-                    </button>
-                  </div>
-                ))}
-                {availableForCustom.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
-              </div>
+              <button
+                type="button"
+                disabled={customSelection.length !== 4}
+                onClick={handleAddCustomToQueue}
+                className="rounded-2xl bg-gradient-to-r from-orange-500 to-pink-500 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Add to Queue
+              </button>
             </div>
           </article>
 
@@ -876,7 +1157,7 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
             <div className="mt-3 flex items-center gap-3 text-sm">
               <Link href={`/queue?batch=${activeBatch.batchId}`} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-slate-100/90">
                 <Waves className="h-4 w-4 text-amber-200" />
-                Open public queue view
+                Open live queue
               </Link>
             </div>
           </article>

@@ -511,7 +511,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       batch_id: dbBatchId,
       name: name.trim(),
       gender,
-      status: 'checked-in',
+      status: 'break',
       created_at: nowIso(),
     });
 
@@ -533,7 +533,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
           batch_id: dbBatchId,
           name: value,
           gender,
-          status: 'checked-in',
+          status: 'break',
           created_at: nowIso(),
         }))
     );
@@ -556,6 +556,67 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       })
       .eq('id', playerId)
       .eq('batch_id', dbBatchId);
+
+    await loadFromDatabase();
+  }, [loadFromDatabase, withBatchDbId]);
+
+  const deletePlayer = useCallback(async (batchId: BatchId, playerId: string) => {
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
+      return;
+    }
+
+    const batch = snapshot.batches[batchId];
+    const player = batch.players.find((entry) => entry.id === playerId);
+    if (!player) {
+      return;
+    }
+
+    const isActive = batch.courts.some(
+      (court) => court.status === 'live' && court.sourceUnitIds.includes(playerId),
+    );
+    if (isActive) {
+      return;
+    }
+
+    if (player.pairId) {
+      const mateId = player.pairId.replace('pair-', '').split('-').find((id) => id !== playerId);
+      if (mateId) {
+        await supabase
+          .from('players')
+          .update({ pair_id: null })
+          .eq('id', mateId)
+          .eq('batch_id', dbBatchId);
+      }
+    }
+
+    await supabase.from('players').delete().eq('id', playerId).eq('batch_id', dbBatchId);
+    await loadFromDatabase();
+  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+
+  const prioritizePlayersForQueue = useCallback(async (batchId: BatchId, playerIds: string[]) => {
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId || playerIds.length === 0) {
+      return;
+    }
+
+    const uniqueIds = Array.from(new Set(playerIds));
+    const base = Date.now() - 60_000;
+
+    for (let index = 0; index < uniqueIds.length; index += 1) {
+      const playerId = uniqueIds[index];
+      const createdAt = new Date(base + index * 1000).toISOString();
+      await supabase
+        .from('players')
+        .update({
+          created_at: createdAt,
+          status: 'checked-in',
+        })
+        .eq('id', playerId)
+        .eq('batch_id', dbBatchId);
+    }
 
     await loadFromDatabase();
   }, [loadFromDatabase, withBatchDbId]);
@@ -885,6 +946,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     addSinglePlayer,
     addBulk,
     updatePlayer,
+    deletePlayer,
+    prioritizePlayersForQueue,
     toggleBreak,
     lockSelectedPair,
     unlockSelectedPair,

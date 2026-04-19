@@ -1,11 +1,15 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { BatchId } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
 
 export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatchId?: BatchId }) {
-  const { activeBatch, isReady, setActiveBatchId } = useCourtsideBoard(initialBatchId);
+  const { activeBatch, isReady, setActiveBatchId, editScore } = useCourtsideBoard(initialBatchId);
+  const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
+  const [scoreA, setScoreA] = useState('');
+  const [scoreB, setScoreB] = useState('');
 
   if (!isReady) {
     return (
@@ -19,6 +23,29 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
   }
 
   const completed = activeBatch.history.filter((match) => match.status === 'complete');
+
+  const beginEdit = (matchId: string, currentA: number | null, currentB: number | null) => {
+    setEditingMatchId(matchId);
+    setScoreA(currentA === null ? '' : String(currentA));
+    setScoreB(currentB === null ? '' : String(currentB));
+  };
+
+  const handleSave = async () => {
+    if (!editingMatchId) {
+      return;
+    }
+
+    const nextA = scoreA === '' ? null : Number(scoreA);
+    const nextB = scoreB === '' ? null : Number(scoreB);
+    if ((nextA !== null && Number.isNaN(nextA)) || (nextB !== null && Number.isNaN(nextB))) {
+      return;
+    }
+
+    await editScore(activeBatch.batchId, editingMatchId, nextA, nextB);
+    setEditingMatchId(null);
+    setScoreA('');
+    setScoreB('');
+  };
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
@@ -64,6 +91,42 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
               </div>
               <div className="mt-3 text-sm text-slate-200/90">Team A: {match.teamA.join(', ')} ({match.scoreA ?? '-'})</div>
               <div className="mt-1 text-sm text-slate-200/90">Team B: {match.teamB.join(', ')} ({match.scoreB ?? '-'})</div>
+              {editingMatchId === match.id ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center">
+                  <input
+                    type="number"
+                    min="0"
+                    value={scoreA}
+                    onChange={(event) => setScoreA(event.target.value)}
+                    placeholder="Score A"
+                    className="glass-input rounded-2xl px-4 py-2"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    value={scoreB}
+                    onChange={(event) => setScoreB(event.target.value)}
+                    placeholder="Score B"
+                    className="glass-input rounded-2xl px-4 py-2"
+                  />
+                  <button type="button" onClick={handleSave} className="rounded-2xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950">
+                    Update
+                  </button>
+                  <button type="button" onClick={() => setEditingMatchId(null)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-100/90">
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => beginEdit(match.id, match.scoreA, match.scoreB)}
+                    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-100/90"
+                  >
+                    Edit score
+                  </button>
+                </div>
+              )}
             </article>
           ))}
         </div>

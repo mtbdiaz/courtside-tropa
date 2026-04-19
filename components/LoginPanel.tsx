@@ -59,7 +59,7 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="admin@courtside.tropa"
+              placeholder="Entrer Admin Email"
               className="glass-input w-full rounded-2xl px-12 py-4 text-sm outline-none transition"
             />
           </div>
