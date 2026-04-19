@@ -60,7 +60,7 @@ interface MatchRow {
   score_team2: number | null;
   winner_team: 'team1' | 'team2' | null;
   status: 'active' | 'completed';
-  match_type: 'custom' | 'mixed';
+  match_type?: 'custom' | 'mixed';
 }
 
 interface MatchHistoryRow {
@@ -210,7 +210,7 @@ function toMatchPreview(match: MatchRow, playersById: Map<string, Player>, index
     teamB: teamBIds.map((id) => playersById.get(id)?.name ?? 'Unknown'),
     playerIds,
     sourceUnitIds: playerIds,
-    mode: match.match_type,
+    mode: (match.match_type ?? 'mixed') as MatchMode,
   };
 }
 
@@ -502,7 +502,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       supabase.from('batches').select('id,name,num_courts,created_at').order('created_at', { ascending: true }),
       supabase.from('players').select('id,batch_id,name,gender,status,pair_id,created_at').order('created_at', { ascending: true }),
       supabase.from('courts').select('id,batch_id,court_number,status,current_match_id,start_time').order('court_number', { ascending: true }),
-      supabase.from('matches').select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status'),
+      supabase.from('matches').select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status,match_type'),
       supabase.from('match_history').select('id,batch_id,match_id,court_number,team1_player1_name,team1_player2_name,team2_player1_name,team2_player2_name,score_team1,score_team2,winner_team,played_at,notes').order('played_at', { ascending: false }),
     ]);
 
