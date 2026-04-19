@@ -490,6 +490,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
+    const isFirstLoad = !isReady;
+
     const [
       { data: sessionData },
       { data: batchesData, error: batchesError },
@@ -562,13 +564,14 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       });
     }
 
-    next.activeBatchId = initialBatchId;
-    next.lastUpdated = nowIso();
-
-    setSnapshot(next);
+    setSnapshot((current) => ({
+      ...next,
+      activeBatchId: isFirstLoad ? initialBatchId : current.activeBatchId,
+      lastUpdated: nowIso(),
+    }));
     setSyncStatus('online');
     setIsReady(true);
-  }, [activeModes, initialBatchId]);
+  }, [activeModes, isReady, initialBatchId]);
 
   const withBatchDbId = useCallback((batchId: BatchId) => batchDbIdRef.current[batchId], []);
 
