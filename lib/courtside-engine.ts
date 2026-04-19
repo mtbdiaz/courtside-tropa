@@ -342,10 +342,6 @@ function collectTeamCandidates(snapshot: BatchSnapshot, units: QueueUnit[], mode
 
   units.forEach((unit, index) => {
     if (unit.type === 'pair') {
-      if (!isPairEligibleForMode(unit.genders, mode)) {
-        return;
-      }
-
       candidates.push({
         unitIds: [unit.id],
         playerIds: unit.playerIds,

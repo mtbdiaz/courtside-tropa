@@ -3,11 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { MatchPreview } from '@/types/courtside';
 import { BatchId } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
-import { getLeaderboardEntries, previewUpcomingMatches, resolveQueueUnits } from '@/lib/courtside-engine';
-import { LogOut, Search, Trophy, Waves } from 'lucide-react';
+import { getLeaderboardEntries, previewUpcomingMatches } from '@/lib/courtside-engine';
+import { LogOut, Search, Trophy } from 'lucide-react';
 
 function formatTimer(startedAt: string | null, nowMs: number) {
   if (!startedAt) {
@@ -50,6 +49,7 @@ export default function CourtsideBoard({
     lockSelectedPair,
     unlockSelectedPair,
     moveQueueUnit,
+    removeQueueMatch,
     startMatchOnCourt,
     completeMatch,
     cancelMatch,
@@ -70,7 +70,6 @@ export default function CourtsideBoard({
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
-  const [readyQueueByBatch, setReadyQueueByBatch] = useState<Record<BatchId, MatchPreview[]>>({ 1: [], 2: [] });
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -165,66 +164,9 @@ export default function CourtsideBoard({
     return getLeaderboardEntries(activeBatch);
   }, [activeBatch]);
 
-  const generatedUpcomingMatches = useMemo(() => previewUpcomingMatches(activeBatch, activeBatch.activeMode, 14), [activeBatch]);
-
-  useEffect(() => {
-    const makeSignature = (match: MatchPreview) => {
-      const sortedUnits = [...match.sourceUnitIds].sort().join('|');
-      return `${sortedUnits}::${match.teamA.join('|')}::${match.teamB.join('|')}`;
-    };
-
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setReadyQueueByBatch((current) => {
-      const existing = current[activeBatch.batchId] ?? [];
-      const freshBySignature = new Map(generatedUpcomingMatches.map((match) => [makeSignature(match), match]));
-
-      const surviving = existing
-        .map((match) => freshBySignature.get(makeSignature(match)))
-        .filter(Boolean) as MatchPreview[];
-
-      const nextReady = surviving.slice(0, 7);
-
-      if (nextReady.length <= 5) {
-        const used = new Set(nextReady.map((match) => makeSignature(match)));
-        for (const match of generatedUpcomingMatches) {
-          const signature = makeSignature(match);
-          if (used.has(signature)) {
-            continue;
-          }
-          nextReady.push(match);
-          used.add(signature);
-          if (nextReady.length === 7) {
-            break;
-          }
-        }
-      }
-
-      const existingSignatures = existing.map((match) => makeSignature(match)).join('||');
-      const nextSignatures = nextReady.map((match) => makeSignature(match)).join('||');
-      if (existingSignatures === nextSignatures) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [activeBatch.batchId]: nextReady,
-      };
-    });
-  }, [activeBatch.batchId, generatedUpcomingMatches]);
-
   const upcomingMatches = useMemo(() => {
-    const cached = readyQueueByBatch[activeBatch.batchId] ?? [];
-    if (cached.length > 0) {
-      return cached;
-    }
-
-    return generatedUpcomingMatches.slice(0, 7);
-  }, [activeBatch.batchId, generatedUpcomingMatches, readyQueueByBatch]);
-
-  const reserveQueueUnits = useMemo(() => {
-    const used = new Set(upcomingMatches.flatMap((match) => match.sourceUnitIds));
-    return resolveQueueUnits(activeBatch).filter((unit) => !used.has(unit.id));
-  }, [activeBatch, upcomingMatches]);
+    return previewUpcomingMatches(activeBatch, activeBatch.activeMode, 7);
+  }, [activeBatch]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -250,6 +192,9 @@ export default function CourtsideBoard({
       return;
     }
 
+    const [firstA, firstB, secondA, secondB] = customSelection;
+    await lockSelectedPair(activeBatch.batchId, firstA, firstB);
+    await lockSelectedPair(activeBatch.batchId, secondA, secondB);
     await prioritizePlayersForQueue(activeBatch.batchId, customSelection);
     setCustomSelection([]);
     setCustomSearch('');
@@ -534,7 +479,7 @@ export default function CourtsideBoard({
                   </div>
                   <div className="mt-3 text-sm text-slate-200/90">Team A: {court.teamA.join(', ')}</div>
                   <div className="mt-1 text-sm text-slate-200/90">Team B: {court.teamB.join(', ')}</div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <input
                       type="number"
                       min="0"
@@ -546,7 +491,7 @@ export default function CourtsideBoard({
                         }))
                       }
                       placeholder="Score A"
-                      className="glass-input rounded-2xl px-4 py-3"
+                      className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
                     />
                     <input
                       type="number"
@@ -559,7 +504,7 @@ export default function CourtsideBoard({
                         }))
                       }
                       placeholder="Score B"
-                      className="glass-input rounded-2xl px-4 py-3"
+                      className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
                     />
                     <button
                       type="button"
@@ -576,7 +521,7 @@ export default function CourtsideBoard({
                           return next;
                         });
                       }}
-                      className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950"
+                      className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 sm:col-span-2"
                     >
                       Save score
                     </button>
@@ -815,6 +760,7 @@ export default function CourtsideBoard({
                     <div className="flex items-center gap-2">
                       <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.sourceUnitIds[0], 'up')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↑</button>
                       <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.sourceUnitIds[0], 'down')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↓</button>
+                      <button type="button" onClick={() => removeQueueMatch(activeBatch.batchId, match.sourceUnitIds)} className="rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-100">Delete</button>
                       <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed' : 'Custom'}</span>
                     </div>
                   </div>
@@ -825,15 +771,6 @@ export default function CourtsideBoard({
                   </div>
                 </div>
               ))}
-            </div>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
-              <h4 className="text-sm font-semibold text-amber-100">Reserve waiting players/pairs</h4>
-              <div className="mt-2 max-h-36 space-y-2 overflow-auto pr-1">
-                {reserveQueueUnits.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
-                {reserveQueueUnits.map((unit) => (
-                  <div key={unit.id} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100/90">{unit.label}</div>
-                ))}
-              </div>
             </div>
           </article>
 
@@ -878,7 +815,7 @@ export default function CourtsideBoard({
                       <>
                         <div className="mt-3 text-sm text-slate-200/90">Team A: {court.teamA.join(', ')}</div>
                         <div className="mt-1 text-sm text-slate-200/90">Team B: {court.teamB.join(', ')}</div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
                           <input
                             type="number"
                             min="0"
@@ -890,7 +827,7 @@ export default function CourtsideBoard({
                               }))
                             }
                             placeholder="Score A"
-                            className="glass-input rounded-2xl px-4 py-3"
+                            className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
                           />
                           <input
                             type="number"
@@ -903,7 +840,7 @@ export default function CourtsideBoard({
                               }))
                             }
                             placeholder="Score B"
-                            className="glass-input rounded-2xl px-4 py-3"
+                            className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
                           />
                           <button
                             type="button"
@@ -920,7 +857,7 @@ export default function CourtsideBoard({
                                 return next;
                               });
                             }}
-                            className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950"
+                            className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 sm:col-span-2"
                           >
                             Save
                           </button>
@@ -1140,6 +1077,11 @@ export default function CourtsideBoard({
             </div>
 
             <div className="mt-4 text-xs text-slate-300/80">{customSelection.length}/4 selected</div>
+            {customSelection.length === 4 ? (
+              <div className="mt-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200/90">
+                Team 1: {activeBatch.players.find((player) => player.id === customSelection[0])?.name ?? '-'} + {activeBatch.players.find((player) => player.id === customSelection[1])?.name ?? '-'} | Team 2: {activeBatch.players.find((player) => player.id === customSelection[2])?.name ?? '-'} + {activeBatch.players.find((player) => player.id === customSelection[3])?.name ?? '-'}
+              </div>
+            ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button
                 type="button"
@@ -1152,15 +1094,6 @@ export default function CourtsideBoard({
             </div>
           </article>
 
-          <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
-            <h3 className="text-xl font-semibold text-white">Public Queue Link</h3>
-            <div className="mt-3 flex items-center gap-3 text-sm">
-              <Link href={`/queue?batch=${activeBatch.batchId}`} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-slate-100/90">
-                <Waves className="h-4 w-4 text-amber-200" />
-                Open live queue
-              </Link>
-            </div>
-          </article>
         </div>
       </section>
     </main>
