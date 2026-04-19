@@ -318,19 +318,11 @@ export function unlockPair(snapshot: BatchSnapshot, pairId: string) {
 }
 
 function isPairEligibleForMode(genders: Gender[], mode: MatchMode) {
-  if (mode === 'mixed') {
-    return genders.includes('M') && genders.includes('F') && genders.length === 2;
+  if (mode !== 'mixed') {
+    return true;
   }
 
-  if (mode === 'all-girls') {
-    return genders.every((gender) => gender === 'F');
-  }
-
-  if (mode === 'all-boys') {
-    return genders.every((gender) => gender === 'M');
-  }
-
-  return true;
+  return genders.includes('M') && genders.includes('F') && genders.length === 2;
 }
 
 function canSingletonsFormTeam(first: QueueUnit, second: QueueUnit, mode: MatchMode) {

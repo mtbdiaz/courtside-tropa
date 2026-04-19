@@ -16,10 +16,10 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
     const supabase = createSupabaseBrowserClient();
     void supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
-        router.replace('/dashboard');
+        router.replace(nextPath);
       }
     });
-  }, [router]);
+  }, [nextPath, router]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -43,10 +43,10 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
   };
 
   return (
-    <div className="glass-panel mx-auto w-full max-w-xl rounded-[2rem] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.45)] sm:p-8">
-      <div className="mb-8 flex items-center gap-3 rounded-3xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200/90">
+    <div className="mx-auto w-full max-w-xl rounded-[1.25rem] border border-white/10 bg-white/5 p-5 sm:p-6">
+      <div className="mb-6 flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-200/90">
         <ShieldCheck className="h-5 w-5 text-amber-300" />
-        Shared admin access for all event operators. Sign in once and every device stays in sync.
+        Shared admin access for event operators.
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">

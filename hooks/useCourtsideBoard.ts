@@ -120,19 +120,7 @@ function modeFromPlayers(genders: Gender[]): MatchMode {
   const males = genders.filter((value) => value === 'M').length;
   const females = genders.filter((value) => value === 'F').length;
 
-  if (males === 2 && females === 2) {
-    return 'mixed';
-  }
-
-  if (females === 4) {
-    return 'all-girls';
-  }
-
-  if (males === 4) {
-    return 'all-boys';
-  }
-
-  return 'custom';
+  return males === 2 && females === 2 ? 'mixed' : 'custom';
 }
 
 function buildPairs(players: Player[]): Pair[] {
@@ -747,6 +735,16 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
   }, [loadFromDatabase, snapshot.batches, startMatchOnCourt]);
 
+  const signOut = useCallback(async () => {
+    const supabase = supabaseRef.current;
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setAuthEmail(null);
+  }, []);
+
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
     supabaseRef.current = supabase;
@@ -790,5 +788,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     completeMatch,
     editScore,
     fillIdleCourts,
+    signOut,
   };
 }

@@ -4,7 +4,7 @@ export type Gender = 'M' | 'F';
 
 export type PlayerStatus = 'checked-in' | 'break';
 
-export type MatchMode = 'mixed' | 'all-girls' | 'all-boys' | 'custom';
+export type MatchMode = 'mixed' | 'custom';
 
 export type CourtStatus = 'idle' | 'live';
 
@@ -94,7 +94,5 @@ export const BATCH_IDS: BatchId[] = [1, 2];
 
 export const MODE_LABELS: Record<MatchMode, string> = {
   mixed: 'Mixed Doubles',
-  'all-girls': 'All-Girls',
-  'all-boys': 'All-Boys',
   custom: 'Custom Match',
 };
