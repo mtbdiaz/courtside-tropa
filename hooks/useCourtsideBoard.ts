@@ -564,9 +564,19 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       });
     }
 
+    const hasData = (batchId: BatchId) => {
+      const batch = next.batches[batchId];
+      return batch.players.length > 0 || batch.courts.some((court) => court.status === 'live') || batch.queueOrder.length > 0 || batch.history.length > 0;
+    };
+
+    const nextActiveBatchId =
+      (isFirstLoad && !hasData(initialBatchId)
+        ? ([1, 2] as BatchId[]).find((batchId) => hasData(batchId)) ?? initialBatchId
+        : initialBatchId);
+
     setSnapshot((current) => ({
       ...next,
-      activeBatchId: isFirstLoad ? initialBatchId : current.activeBatchId,
+      activeBatchId: isFirstLoad ? nextActiveBatchId : current.activeBatchId,
       lastUpdated: nowIso(),
     }));
     setSyncStatus('online');
