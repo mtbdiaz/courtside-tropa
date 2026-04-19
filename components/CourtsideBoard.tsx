@@ -198,20 +198,23 @@ export default function CourtsideBoard({
         courtLabel: `Custom ${index + 1}`,
         teamA: [playerById.get(game.playerIds[0])?.name ?? '-', playerById.get(game.playerIds[1])?.name ?? '-'],
         teamB: [playerById.get(game.playerIds[2])?.name ?? '-', playerById.get(game.playerIds[3])?.name ?? '-'],
+        playerIds: [...game.playerIds],
         sourceUnitIds: [...game.playerIds],
         mode: 'custom' as const,
       }));
   }, [activeBatch.batchId, activeBatch.players, activePlayers, customQueuedByBatch]);
 
-  const upcomingMatches = useMemo(() => {
-    const reservedPlayerIds = new Set(customQueuedMatches.flatMap((match) => match.sourceUnitIds));
-    const mixedMatches = previewUpcomingMatches(activeBatch, activeBatch.activeMode, 999).filter(
-      (match) => !match.sourceUnitIds.some((id) => reservedPlayerIds.has(id)),
+  const mixedUpcomingMatches = useMemo(() => {
+    const reservedPlayerIds = new Set(customQueuedMatches.flatMap((match) => match.playerIds));
+    return previewUpcomingMatches(activeBatch, activeBatch.activeMode, 999).filter(
+      (match) => !match.playerIds.some((id) => reservedPlayerIds.has(id)),
     );
-
-    const visibleMixed = mixedMatches.slice(0, 7);
-    return [...visibleMixed, ...customQueuedMatches];
   }, [activeBatch, customQueuedMatches]);
+
+  const upcomingMatches = useMemo(() => {
+    const visibleMixed = mixedUpcomingMatches.slice(0, 7);
+    return [...visibleMixed, ...customQueuedMatches];
+  }, [customQueuedMatches, mixedUpcomingMatches]);
 
   const queuePaused = queuePausedByBatch[activeBatch.batchId];
   const autoFillEnabled = autoFillEnabledByBatch[activeBatch.batchId];
@@ -226,6 +229,10 @@ export default function CourtsideBoard({
         return;
       }
 
+      if (mixedUpcomingMatches.length > 5) {
+        return;
+      }
+
       autoFillRunningRef.current = true;
       Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
         autoFillRunningRef.current = false;
@@ -235,7 +242,7 @@ export default function CourtsideBoard({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, publicView, queuePaused, scoreOnly]);
+  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, mixedUpcomingMatches.length, publicView, queuePaused, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -428,7 +435,8 @@ export default function CourtsideBoard({
 
   if (publicView) {
     const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle');
-    const nextMatch = upcomingMatches[0];
+    const nextTwoMatches = upcomingMatches.slice(0, 2);
+    const nextMatch = nextTwoMatches[0];
 
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
@@ -470,17 +478,22 @@ export default function CourtsideBoard({
               <div className="text-[11px] font-black uppercase tracking-[0.3em] text-amber-100/90">Now Calling</div>
               {nextMatch ? (
                 <>
-                  <div className="mt-2 text-xs font-black uppercase tracking-[0.22em] text-white/90 sm:text-sm">NEXT READY MATCH:</div>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                    <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
-                      <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team A</div>
-                      <div className="mt-1">{nextMatch.teamA.join(' + ')}</div>
-                    </div>
-                    <div className="text-center text-sm font-black uppercase tracking-[0.3em] text-amber-50">VS</div>
-                    <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
-                      <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team B</div>
-                      <div className="mt-1">{nextMatch.teamB.join(' + ')}</div>
-                    </div>
+                  <div className="mt-2 text-xs font-black uppercase tracking-[0.22em] text-white/90 sm:text-sm">NEXT READY MATCHES:</div>
+                  <div className="mt-2 space-y-2">
+                    {nextTwoMatches.map((match, idx) => (
+                      <div key={match.id} className="grid gap-2 sm:grid-cols-[auto_1fr_auto_1fr] sm:items-center">
+                        <div className="text-xs font-black uppercase tracking-[0.22em] text-amber-50/90">{idx + 1}</div>
+                        <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
+                          <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team A</div>
+                          <div className="mt-1">{match.teamA.join(' + ')}</div>
+                        </div>
+                        <div className="text-center text-sm font-black uppercase tracking-[0.3em] text-amber-50">VS</div>
+                        <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
+                          <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team B</div>
+                          <div className="mt-1">{match.teamB.join(' + ')}</div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                   {nextOpenCourt ? (
                     <div className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-50/90">On {nextOpenCourt.label}</div>
@@ -507,7 +520,7 @@ export default function CourtsideBoard({
                       <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.75)]" />
                       Ready match {index + 1}
                     </div>
-                    <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed Doubles' : 'Custom Match'}</div>
+                    <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed' : 'Custom'}</div>
                   </div>
 
                   <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">

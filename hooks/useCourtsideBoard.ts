@@ -931,7 +931,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
   const removeQueueMatch = useCallback(async (batchId: BatchId, sourceUnitIds: string[]) => {
     const supabase = supabaseRef.current;
-    if (!supabase || sourceUnitIds.length === 0) {
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId || sourceUnitIds.length === 0) {
       return;
     }
 
@@ -943,6 +944,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     for (const unitId of sourceUnitIds) {
       const unit = unitById.get(unitId);
       if (!unit) {
+        const directPlayer = batch.players.find((entry) => entry.id === unitId);
+        if (directPlayer) {
+          playerIds.add(directPlayer.id);
+        }
         continue;
       }
       unit.playerIds.forEach((id) => playerIds.add(id));
@@ -952,9 +957,21 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    await supabase.from('players').update({ status: 'break' }).in('id', Array.from(playerIds));
+    const ids = Array.from(playerIds);
+    const base = Date.now();
+    for (let i = 0; i < ids.length; i += 1) {
+      await supabase
+        .from('players')
+        .update({
+          status: 'checked-in',
+          created_at: new Date(base + i * 1000).toISOString(),
+        })
+        .eq('id', ids[i])
+        .eq('batch_id', dbBatchId);
+    }
+
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches]);
+  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
 
   const fillIdleCourts = useCallback(async (batchId: BatchId) => {
     const supabase = supabaseRef.current;

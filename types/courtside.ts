@@ -81,6 +81,7 @@ export interface MatchPreview {
   courtLabel: string;
   teamA: string[];
   teamB: string[];
+  playerIds: string[];
   sourceUnitIds: string[];
   mode: MatchMode;
 }

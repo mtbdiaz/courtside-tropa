@@ -323,6 +323,7 @@ export function previewUpcomingMatches(snapshot: BatchSnapshot, mode: MatchMode,
       courtLabel: `Match ${nextIndex}`,
       teamA: match.teamA.map(toName),
       teamB: match.teamB.map(toName),
+      playerIds: match.playerIds,
       sourceUnitIds: match.sourceUnitIds,
       mode,
     });
