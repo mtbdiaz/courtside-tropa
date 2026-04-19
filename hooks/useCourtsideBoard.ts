@@ -543,11 +543,62 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       setAuthEmail(sessionData.session.user.email);
     }
 
-    const batches = (batchesData ?? []) as BatchRow[];
+    let batches = (batchesData ?? []) as BatchRow[];
     const players = (playersData ?? []) as PlayerRow[];
     const courts = (courtsData ?? []) as CourtRow[];
     const matches = (matchesData ?? []) as MatchRow[];
     const histories = (historyData ?? []) as MatchHistoryRow[];
+
+    if (batches.length === 0) {
+      const { data: existingEvent } = await supabase.from('events').select('id').limit(1).maybeSingle();
+      let eventId = existingEvent?.id as string | undefined;
+
+      if (!eventId) {
+        const { data: createdEvent } = await supabase
+          .from('events')
+          .insert({
+            name: 'Courtside Tropa',
+            tagline: 'Just One More Game... with Tropa',
+            date: 'May 1, 2026',
+            venue: 'Paddle Up! Davao (Buhangin)',
+          })
+          .select('id')
+          .single();
+        eventId = createdEvent?.id as string | undefined;
+      }
+
+      if (eventId) {
+        await supabase.from('batches').insert([
+          {
+            event_id: eventId,
+            name: 'Batch 1',
+            start_time: '8:00 AM - 12:00 NN',
+            end_time: '8:00 AM - 12:00 NN',
+            num_courts: 5,
+          },
+          {
+            event_id: eventId,
+            name: 'Batch 2',
+            start_time: '1:00 PM - 5:00 PM',
+            end_time: '1:00 PM - 5:00 PM',
+            num_courts: 5,
+          },
+        ]);
+      }
+
+      const { data: refreshedBatches, error: refreshedBatchesError } = await supabase
+        .from('batches')
+        .select('id,name,num_courts,created_at')
+        .order('created_at', { ascending: true });
+
+      if (refreshedBatchesError) {
+        setSyncStatus('offline');
+        setIsReady(true);
+        return;
+      }
+
+      batches = (refreshedBatches ?? []) as BatchRow[];
+    }
 
     const byLogicalBatch = new Map<BatchId, BatchRow>();
 
