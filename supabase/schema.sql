@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS batches (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_event_name_unique ON batches(event_id, name);
+
 -- 3. Players - 3 States + Fairness
 CREATE TABLE IF NOT EXISTS players (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -48,6 +50,8 @@ CREATE TABLE IF NOT EXISTS courts (
   start_time TIMESTAMPTZ,                -- For live elapsed timer
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_courts_batch_number_unique ON courts(batch_id, court_number);
 
 -- 5. Matches (Queue = list of matches ordered by queue_position)
 CREATE TABLE IF NOT EXISTS matches (
@@ -108,15 +112,25 @@ CREATE INDEX IF NOT EXISTS idx_courts_batch ON courts(batch_id);
 CREATE INDEX IF NOT EXISTS idx_match_history_batch ON match_history(batch_id);
 
 -- Prevent duplicate players in same match (basic safety)
-ALTER TABLE matches ADD CONSTRAINT check_no_duplicate_players 
-  CHECK (
-    team1_player1_id IS DISTINCT FROM team1_player2_id AND
-    team1_player1_id IS DISTINCT FROM team2_player1_id AND
-    team1_player1_id IS DISTINCT FROM team2_player2_id AND
-    team1_player2_id IS DISTINCT FROM team2_player1_id AND
-    team1_player2_id IS DISTINCT FROM team2_player2_id AND
-    team2_player1_id IS DISTINCT FROM team2_player2_id
-  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'check_no_duplicate_players'
+      AND conrelid = 'matches'::regclass
+  ) THEN
+    ALTER TABLE matches ADD CONSTRAINT check_no_duplicate_players
+      CHECK (
+        team1_player1_id IS DISTINCT FROM team1_player2_id AND
+        team1_player1_id IS DISTINCT FROM team2_player1_id AND
+        team1_player1_id IS DISTINCT FROM team2_player2_id AND
+        team1_player2_id IS DISTINCT FROM team2_player1_id AND
+        team1_player2_id IS DISTINCT FROM team2_player2_id AND
+        team2_player1_id IS DISTINCT FROM team2_player2_id
+      );
+  END IF;
+END $$;
 
 -- =============================================
 -- REALTIME & RLS
@@ -128,10 +142,18 @@ ALTER TABLE courts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE matches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE match_history ENABLE ROW LEVEL SECURITY;
 
--- Realtime publication
-DROP PUBLICATION IF EXISTS supabase_realtime;
-CREATE PUBLICATION supabase_realtime FOR TABLE 
-  events, batches, players, courts, matches, match_history;
+-- Realtime publication (safe for reruns)
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE events, batches, players, courts, matches, match_history;
+  EXCEPTION
+    WHEN duplicate_object THEN
+      NULL;
+    WHEN undefined_object THEN
+      NULL;
+  END;
+END $$;
 
 -- Replica Identity for proper UPDATE/DELETE realtime
 ALTER TABLE players REPLICA IDENTITY FULL;
@@ -141,39 +163,51 @@ ALTER TABLE match_history REPLICA IDENTITY FULL;
 ALTER TABLE batches REPLICA IDENTITY FULL;
 
 -- Admin (authenticated) full access
+DROP POLICY IF EXISTS "Admin full access" ON events;
 CREATE POLICY "Admin full access" ON events FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Admin full access" ON batches;
 CREATE POLICY "Admin full access" ON batches FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Admin full access" ON players;
 CREATE POLICY "Admin full access" ON players FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Admin full access" ON courts;
 CREATE POLICY "Admin full access" ON courts FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Admin full access" ON matches;
 CREATE POLICY "Admin full access" ON matches FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Admin full access" ON match_history;
 CREATE POLICY "Admin full access" ON match_history FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Public read-only for queue view (players on phones)
+DROP POLICY IF EXISTS "Public read queue" ON players;
 CREATE POLICY "Public read queue" ON players FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "Public read queue" ON courts;
 CREATE POLICY "Public read queue" ON courts FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "Public read queue" ON matches;
 CREATE POLICY "Public read queue" ON matches FOR SELECT TO anon USING (status IN ('queued', 'playing'));
+DROP POLICY IF EXISTS "Public read queue" ON batches;
 CREATE POLICY "Public read queue" ON batches FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "Public read queue" ON events;
 CREATE POLICY "Public read queue" ON events FOR SELECT TO anon USING (true);
 
 -- =============================================
--- INITIAL SEED (Run once)
+-- INITIAL SEED (Idempotent)
 -- =============================================
-INSERT INTO events (name, tagline, date, venue)
-VALUES ('Courtside Tropa', 'Just One More Game… with Tropa 🏓🌅', 'May 1, 2026', 'Paddle Up! Davao (Buhangin)')
-ON CONFLICT DO NOTHING;
-
--- Insert Batches
 DO $$
 DECLARE
   ev_id UUID;
 BEGIN
-  SELECT id INTO ev_id FROM events LIMIT 1;
+  SELECT id INTO ev_id FROM events ORDER BY created_at ASC LIMIT 1;
+
+  IF ev_id IS NULL THEN
+    INSERT INTO events (name, tagline, date, venue)
+    VALUES ('Courtside Tropa', 'Just One More Game… with Tropa 🏓🌅', 'May 1, 2026', 'Paddle Up! Davao (Buhangin)')
+    RETURNING id INTO ev_id;
+  END IF;
 
   INSERT INTO batches (event_id, name, start_time, end_time, num_courts)
-  VALUES 
+  VALUES
     (ev_id, 'Batch 1', '8:00 AM - 12:00 NN', '8:00 AM - 12:00 NN', 5),
     (ev_id, 'Batch 2', '1:00 PM - 5:00 PM', '1:00 PM - 5:00 PM', 5)
-  ON CONFLICT DO NOTHING;
+  ON CONFLICT (event_id, name) DO NOTHING;
 END $$;
 
 SELECT '✅ Courtside Tropa schema applied successfully!' AS message;
