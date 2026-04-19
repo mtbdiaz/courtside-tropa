@@ -741,6 +741,7 @@ export default function CourtsideBoard({
         <div className="space-y-6">
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
             <h3 className="text-xl font-semibold text-white">Add Player/s</h3>
+            <p className="mt-2 text-xs text-amber-100/90">New players are added to Break by default. Move them to Checked-In from the On Break section.</p>
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <label className="text-sm text-slate-200/90">Single player</label>
@@ -1123,7 +1124,7 @@ export default function CourtsideBoard({
                       onClick={() => toggleBreak(activeBatch.batchId, player.id)}
                       className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
                     >
-                      Return
+                      Check In
                     </button>
                   </div>
                 ))}
