@@ -176,6 +176,20 @@ CREATE POLICY "Admin full access" ON matches FOR ALL TO authenticated USING (tru
 DROP POLICY IF EXISTS "Admin full access" ON match_history;
 CREATE POLICY "Admin full access" ON match_history FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
+-- Temporary public write access for event operations (admin UI can function with anon session)
+DROP POLICY IF EXISTS "Public write events" ON events;
+CREATE POLICY "Public write events" ON events FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public write batches" ON batches;
+CREATE POLICY "Public write batches" ON batches FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public write players" ON players;
+CREATE POLICY "Public write players" ON players FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public write courts" ON courts;
+CREATE POLICY "Public write courts" ON courts FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public write matches" ON matches;
+CREATE POLICY "Public write matches" ON matches FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public write history" ON match_history;
+CREATE POLICY "Public write history" ON match_history FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
 -- Public read-only for queue view (players on phones)
 DROP POLICY IF EXISTS "Public read queue" ON players;
 CREATE POLICY "Public read queue" ON players FOR SELECT TO anon USING (true);
