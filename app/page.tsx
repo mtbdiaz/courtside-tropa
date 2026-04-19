@@ -1,65 +1,99 @@
-import Image from "next/image";
+import Header from './components/Header';
+import LoginPanel from '@/components/LoginPanel';
+import Link from 'next/link';
+import { ArrowRight, Waves, CalendarDays, Sparkles } from 'lucide-react';
 
-export default function Home() {
+export default function HomePage({ searchParams }: { searchParams?: { next?: string } }) {
+  const nextPath = searchParams?.next ?? '/dashboard';
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen">
+      <Header />
+
+      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-8 lg:grid-cols-[1.1fr_0.9fr] lg:px-6 lg:py-12">
+        <div className="space-y-6">
+          <div className="glass-panel rounded-[2rem] p-6 sm:p-8">
+            <p className="text-xs uppercase tracking-[0.35em] text-amber-200/80">Sunset theme realtime system</p>
+            <h2 className="text-display mt-3 text-4xl font-semibold leading-tight sm:text-5xl">
+              Queue faster, match cleaner, and keep every court synced.
+            </h2>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-slate-200/85">
+              Courtside Tropa is built for a one-day pickleball event with live queueing, batch switching, court timers, score entry, and shared admin access across devices.
+            </p>
+
+            <div className="mt-6 flex flex-wrap gap-3 text-sm text-slate-100/90">
+              <Badge icon={<CalendarDays className="h-4 w-4" />} text="Batch 1: 8 AM - 12 NN" />
+              <Badge icon={<CalendarDays className="h-4 w-4" />} text="Batch 2: 1 PM - 5 PM" />
+              <Badge icon={<Sparkles className="h-4 w-4" />} text="80-100 players per batch" />
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/queue?batch=1" className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
+                <Waves className="h-4 w-4 text-amber-200" />
+                View public queue
+              </Link>
+              <Link href="/dashboard" className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 via-pink-500 to-purple-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-950/30">
+                Open dashboard
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <FeatureCard title="Realtime" copy="Supabase auth, database sync, and broadcast-friendly updates across admin and public devices." />
+            <FeatureCard title="Courts" copy="Five or six active courts with live timers and automatic queue assignment as matches end." />
+            <FeatureCard title="Flow" copy="Pair players, pause breaks, finalize scores, and send the next players back into play." />
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="space-y-6">
+          <section className="glass-panel rounded-[2rem] p-6 sm:p-8">
+            <div className="mb-6 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">Admin access</p>
+                <h3 className="mt-2 text-2xl font-semibold text-white">Sign in</h3>
+              </div>
+              <div className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">Shared login</div>
+            </div>
+            <LoginPanel nextPath={nextPath} />
+          </section>
+
+          <section className="glass-panel rounded-[2rem] p-6 sm:p-8">
+            <div className="flex items-center gap-3 text-amber-200">
+              <Sparkles className="h-5 w-5" />
+              <h3 className="text-lg font-semibold text-white">Event details</h3>
+            </div>
+            <div className="mt-4 grid gap-3 text-sm text-slate-200/85 sm:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Venue</div>
+                <div className="mt-2 font-medium text-white">Paddle Up! Davao (Buhangin)</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Theme</div>
+                <div className="mt-2 font-medium text-white">Deep indigo with sunset gradients</div>
+              </div>
+            </div>
+          </section>
         </div>
-      </main>
+      </section>
+    </main>
+  );
+}
+
+function Badge({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2">
+      <span className="text-amber-200">{icon}</span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function FeatureCard({ title, copy }: { title: string; copy: string }) {
+  return (
+    <div className="glass-panel rounded-[1.75rem] p-5">
+      <h4 className="text-lg font-semibold text-white">{title}</h4>
+      <p className="mt-2 text-sm leading-6 text-slate-300/80">{copy}</p>
     </div>
   );
 }

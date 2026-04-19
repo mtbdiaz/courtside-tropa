@@ -1,26 +1,114 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+  --sunset-indigo: #17132f;
+  --sunset-violet: #2a184d;
+  --sunset-ember: #fb923c;
+  --sunset-rose: #fb7185;
+  --sunset-gold: #facc15;
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-bg: rgba(12, 10, 28, 0.58);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(251, 146, 60, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(251, 113, 133, 0.16), transparent 24%),
+    radial-gradient(circle at bottom center, rgba(250, 204, 21, 0.12), transparent 22%),
+    linear-gradient(160deg, #090816 0%, #17132f 34%, #2a184d 68%, #160f2a 100%);
+  color: #f8fafc;
+  font-family: var(--font-space-grotesk), 'Trebuchet MS', sans-serif;
+}
+
+.sun-glow {
+  animation: sun-rotate 90s linear infinite, sun-pulse 5.5s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes sun-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes sun-pulse {
+  0%, 100% { 
+    filter: drop-shadow(0 0 30px #feda84) drop-shadow(0 0 60px #ff6d2e); 
+  }
+  50% { 
+    filter: drop-shadow(0 0 50px #feda84) drop-shadow(0 0 90px #ff4d5b); 
+  }
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 24px 80px rgba(7, 7, 18, 0.42);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.glass-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+}
+
+.glass-input::placeholder {
+  color: rgba(248, 250, 252, 0.46);
+}
+
+.glass-input:focus {
+  border-color: rgba(250, 204, 21, 0.7);
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.12);
+}
+
+.soft-grid {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.sun-orb {
+  box-shadow: 0 0 24px rgba(250, 204, 21, 0.26), 0 0 68px rgba(251, 113, 133, 0.16);
+}
+
+.card-rise {
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.card-rise:hover {
+  transform: translateY(-2px);
+  border-color: rgba(250, 204, 21, 0.28);
+  box-shadow: 0 24px 42px rgba(2, 6, 23, 0.36);
+}
+
+.queue-item {
+  transition: transform 160ms ease, opacity 160ms ease, border-color 160ms ease;
+}
+
+.queue-item[data-active='true'] {
+  border-color: rgba(250, 204, 21, 0.7);
+  background: rgba(250, 204, 21, 0.08);
+}
+
+.text-display {
+  font-family: var(--font-cormorant), Georgia, serif;
+}
+
+.bg-midnight {
+  background:
+    radial-gradient(circle at top left, rgba(250, 204, 21, 0.12), transparent 22%),
+    radial-gradient(circle at top right, rgba(251, 113, 133, 0.12), transparent 24%),
+    linear-gradient(180deg, #0a0920 0%, #17132f 45%, #100d22 100%);
 }
