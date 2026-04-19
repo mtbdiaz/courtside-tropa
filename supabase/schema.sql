@@ -164,3 +164,33 @@ begin
     end if;
   end loop;
 end $$;
+
+do $$
+declare
+  batch1 uuid;
+  batch2 uuid;
+begin
+  if not exists (select 1 from players) then
+    select id into batch1 from batches where name = 'Batch 1' limit 1;
+    select id into batch2 from batches where name = 'Batch 2' limit 1;
+
+    insert into players (batch_id, name, gender, status)
+    values
+      (batch1, 'Alex Santos', 'M', 'checked-in'),
+      (batch1, 'Bea Cruz', 'F', 'checked-in'),
+      (batch1, 'Chris Dela Cruz', 'M', 'checked-in'),
+      (batch1, 'Dana Reyes', 'F', 'checked-in'),
+      (batch1, 'Eli Navarro', 'M', 'checked-in'),
+      (batch1, 'Faith Gomez', 'F', 'checked-in'),
+      (batch1, 'Gabby Lim', 'M', 'checked-in'),
+      (batch1, 'Hana Torres', 'F', 'checked-in'),
+      (batch2, 'Ivan Flores', 'M', 'checked-in'),
+      (batch2, 'Jessa Morales', 'F', 'checked-in'),
+      (batch2, 'Kyle Tan', 'M', 'checked-in'),
+      (batch2, 'Lia Bautista', 'F', 'checked-in'),
+      (batch2, 'Miko Diaz', 'M', 'checked-in'),
+      (batch2, 'Nina Santos', 'F', 'checked-in'),
+      (batch2, 'Owen Garcia', 'M', 'checked-in'),
+      (batch2, 'Pia Lopez', 'F', 'checked-in');
+  end if;
+end $$;
