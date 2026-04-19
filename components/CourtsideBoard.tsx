@@ -71,6 +71,7 @@ export default function CourtsideBoard({
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
+  const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -166,8 +167,13 @@ export default function CourtsideBoard({
   }, [activeBatch]);
 
   const upcomingMatches = useMemo(() => {
+    if (queuePausedByBatch[activeBatch.batchId]) {
+      return [];
+    }
     return previewUpcomingMatches(activeBatch, activeBatch.activeMode, 999);
-  }, [activeBatch]);
+  }, [activeBatch, queuePausedByBatch]);
+
+  const queuePaused = queuePausedByBatch[activeBatch.batchId];
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -755,6 +761,22 @@ export default function CourtsideBoard({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() =>
+                    setQueuePausedByBatch((current) => ({
+                      ...current,
+                      [activeBatch.batchId]: !current[activeBatch.batchId],
+                    }))
+                  }
+                  className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                    queuePaused
+                      ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15'
+                      : 'border-amber-300/40 bg-amber-500/10 text-amber-100 hover:bg-amber-500/15'
+                  }`}
+                >
+                  {queuePaused ? 'Play queue' : 'Pause queue'}
+                </button>
+                <button
+                  type="button"
                   onClick={() => refreshQueueProcess(activeBatch.batchId)}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
@@ -762,15 +784,17 @@ export default function CourtsideBoard({
                 </button>
                 <button
                   type="button"
+                  disabled={queuePaused}
                   onClick={() => fillIdleCourts(activeBatch.batchId)}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
+                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Auto-fill courts
                 </button>
               </div>
             </div>
+            {queuePaused ? <div className="mt-3 rounded-2xl border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.15em] text-amber-100">Queue is paused</div> : null}
             <div className="mt-4 space-y-3">
-              {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">Queue is empty.</div> : null}
+              {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">{queuePaused ? 'Queue paused.' : 'Queue is empty.'}</div> : null}
               {upcomingMatches.map((match, index) => (
                 <div key={match.id} className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">
                   <div className="flex items-center justify-between gap-3">

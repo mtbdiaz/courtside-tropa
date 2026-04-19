@@ -603,7 +603,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     const uniqueIds = Array.from(new Set(playerIds));
-    const base = Date.now() - 60_000;
+    const batchPlayers = snapshot.batches[batchId].players;
+    const earliestCreatedAt = batchPlayers.reduce((earliest, player) => {
+      const value = new Date(player.createdAt).getTime();
+      return Number.isFinite(value) ? Math.min(earliest, value) : earliest;
+    }, Date.now());
+
+    const base = earliestCreatedAt - uniqueIds.length * 3000;
 
     for (let index = 0; index < uniqueIds.length; index += 1) {
       const playerId = uniqueIds[index];
@@ -619,7 +625,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, withBatchDbId]);
+  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
 
   const toggleBreak = useCallback(async (_batchId: BatchId, playerId: string) => {
     const supabase = supabaseRef.current;
@@ -757,7 +763,17 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     ].filter(Boolean) as string[];
 
     if (playerIds.length > 0) {
-      await supabase.from('players').update({ created_at: nowIso(), status: 'checked-in' }).in('id', playerIds);
+      const base = Date.now() - playerIds.length * 1000;
+      for (let i = 0; i < playerIds.length; i += 1) {
+        await supabase
+          .from('players')
+          .update({
+            created_at: new Date(base + i * 1000).toISOString(),
+            status: 'checked-in',
+          })
+          .eq('id', playerIds[i])
+          .eq('batch_id', dbBatchId);
+      }
     }
 
     await Promise.all([

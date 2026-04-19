@@ -703,7 +703,9 @@ export function findNextMatch(snapshot: BatchSnapshot, mode: MatchMode, selected
         }, 0);
       }, 0);
 
-      const totalScore = candidateScore + matchupPenalty + Math.abs(first.playerIds.length - second.playerIds.length) * 10 + first.order + second.order;
+      // Keep queue order dominant so early units are matched first and queue is stable.
+      const queueOrderPenalty = (first.order + second.order) * 500;
+      const totalScore = candidateScore + matchupPenalty + Math.abs(first.playerIds.length - second.playerIds.length) * 10 + queueOrderPenalty;
 
       if (!best || totalScore < best.score || (totalScore === best.score && first.order + second.order < best.order)) {
         best = {
