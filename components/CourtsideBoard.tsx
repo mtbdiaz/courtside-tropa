@@ -731,6 +731,12 @@ export default function CourtsideBoard({
         <StatCard label="Break" value={batchCounts.onBreak} />
       </section>
 
+      {batchCounts.checkedIn < 4 ? (
+        <section className="rounded-2xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/95">
+          Need at least 4 checked-in players to generate matches and make courts live.
+        </section>
+      ) : null}
+
       <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-6">
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
