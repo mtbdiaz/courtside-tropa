@@ -12,7 +12,7 @@ export default function Header() {
             <div className="absolute inset-2 rounded-full bg-[radial-gradient(circle,rgba(250,204,21,0.35),transparent_68%)] blur-sm" />
           </div>
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-orange-200/80">One-Day Pickleball Event</p>
+            <p className="text-xs uppercase tracking-[0.35em] text-orange-200/80">HOSTED BY TROPA OCASO EVENTS</p>
             <h1 className="text-display text-3xl font-semibold tracking-tight sm:text-4xl">
               Courtside Tropa
             </h1>

@@ -581,7 +581,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (player.pairId) {
-      const mateId = player.pairId.replace('pair-', '').split('-').find((id) => id !== playerId);
+      const pair = batch.pairs.find((entry) => entry.id === player.pairId);
+      const mateId = pair?.playerIds.find((id) => id !== playerId);
       if (mateId) {
         await supabase
           .from('players')
@@ -627,13 +628,14 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     await loadFromDatabase();
   }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
 
-  const toggleBreak = useCallback(async (_batchId: BatchId, playerId: string) => {
+  const toggleBreak = useCallback(async (batchId: BatchId, playerId: string) => {
     const supabase = supabaseRef.current;
     if (!supabase) {
       return;
     }
 
-    const player = activeBatch.players.find((entry) => entry.id === playerId);
+    const batch = snapshot.batches[batchId];
+    const player = batch.players.find((entry) => entry.id === playerId);
     if (!player) {
       return;
     }
@@ -642,15 +644,15 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     await supabase.from('players').update({ status: nextStatus }).eq('id', playerId);
 
     if (player.pairId) {
-      const pairIds = player.pairId.replace('pair-', '').split('-');
-      const mateId = pairIds.find((id) => id !== playerId);
+      const pair = batch.pairs.find((entry) => entry.id === player.pairId);
+      const mateId = pair?.playerIds.find((id) => id !== playerId);
       if (mateId) {
         await supabase.from('players').update({ status: nextStatus }).eq('id', mateId);
       }
     }
 
     await loadFromDatabase();
-  }, [activeBatch.players, loadFromDatabase]);
+  }, [loadFromDatabase, snapshot.batches]);
 
   const lockSelectedPair = useCallback(async (_batchId: BatchId, firstPlayerId: string, secondPlayerId: string) => {
     const supabase = supabaseRef.current;
@@ -666,20 +668,22 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     await loadFromDatabase();
   }, [loadFromDatabase]);
 
-  const unlockSelectedPair = useCallback(async (_batchId: BatchId, pairId: string) => {
+  const unlockSelectedPair = useCallback(async (batchId: BatchId, pairId: string) => {
     const supabase = supabaseRef.current;
     if (!supabase) {
       return;
     }
 
-    const ids = pairId.replace('pair-', '').split('-').filter(Boolean);
+    const batch = snapshot.batches[batchId];
+    const pair = batch.pairs.find((entry) => entry.id === pairId);
+    const ids = pair?.playerIds ?? [];
     if (ids.length !== 2) {
       return;
     }
 
     await supabase.from('players').update({ pair_id: null }).in('id', ids);
     await loadFromDatabase();
-  }, [loadFromDatabase]);
+  }, [loadFromDatabase, snapshot.batches]);
 
   const moveQueueUnit = useCallback(async (batchId: BatchId, unitId: string, direction: 'up' | 'down') => {
     const supabase = supabaseRef.current;

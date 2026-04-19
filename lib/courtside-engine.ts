@@ -257,79 +257,6 @@ export function getLeaderboardEntries(snapshot: BatchSnapshot): LeaderboardEntry
   return entries;
 }
 
-function getCandidateScore(
-  snapshot: BatchSnapshot,
-  playerIds: string[],
-  teamGenders: Gender[],
-  mode: MatchMode,
-  stats: Map<string, ReturnType<typeof getPlayerStats> extends Map<string, infer Entry> ? Entry : never>
-) {
-  const now = Date.now();
-  let score = 0;
-
-  const playerEntries = playerIds.map((id) => ({
-    id,
-    stat: stats.get(id),
-    player: snapshot.players.find((entry) => entry.id === id),
-  }));
-
-  for (const entry of playerEntries) {
-    if (!entry.player || !entry.stat) {
-      continue;
-    }
-
-    score += entry.stat.gamesPlayed * 90;
-    score += entry.stat.wins * 12;
-
-    const reference = entry.stat.lastPlayedAt ?? entry.player.createdAt;
-    const waitMinutes = Math.max(0, (now - new Date(reference).getTime()) / 60000);
-    score -= waitMinutes * 8;
-  }
-
-  if (mode === 'mixed') {
-    const males = teamGenders.filter((gender) => gender === 'M').length;
-    const females = teamGenders.filter((gender) => gender === 'F').length;
-    score += males === 1 && females === 1 ? 0 : 35;
-  }
-
-  const combos = [
-    [playerIds[0], playerIds[1]],
-    [playerIds[2], playerIds[3]],
-  ] as const;
-
-  for (const [firstId, secondId] of combos) {
-    const firstStat = stats.get(firstId);
-    const secondStat = stats.get(secondId);
-    if (!firstStat || !secondStat) {
-      continue;
-    }
-
-    if (firstStat.recentTeammates.includes(secondId) || secondStat.recentTeammates.includes(firstId)) {
-      score += 120;
-    }
-  }
-
-  for (const firstId of [playerIds[0], playerIds[1]]) {
-    const firstStat = stats.get(firstId);
-    if (!firstStat) {
-      continue;
-    }
-
-    for (const secondId of [playerIds[2], playerIds[3]]) {
-      const secondStat = stats.get(secondId);
-      if (!secondStat) {
-        continue;
-      }
-
-      if (firstStat.recentOpponents.includes(secondId) || secondStat.recentOpponents.includes(firstId)) {
-        score += 40;
-      }
-    }
-  }
-
-  return score;
-}
-
 function collectTeamCandidates(snapshot: BatchSnapshot, units: QueueUnit[], mode: MatchMode) {
   const playerMap = getPlayerMap(snapshot);
   const candidates: Array<{
@@ -662,72 +589,26 @@ export function findNextMatch(snapshot: BatchSnapshot, mode: MatchMode, selected
     return null;
   }
 
-  const stats = getPlayerStats(snapshot);
-  let best: {
-    sourceUnitIds: string[];
-    teamA: string[];
-    teamB: string[];
-    playerIds: string[];
-    score: number;
-    order: number;
-  } | null = null;
-
   for (let firstIndex = 0; firstIndex < candidates.length; firstIndex += 1) {
     const first = candidates[firstIndex];
 
     for (let secondIndex = firstIndex + 1; secondIndex < candidates.length; secondIndex += 1) {
       const second = candidates[secondIndex];
-
       const overlaps = first.unitIds.some((unitId) => second.unitIds.includes(unitId));
       if (overlaps) {
         continue;
       }
 
-      const candidateScore =
-        getCandidateScore(snapshot, first.playerIds, first.genders, mode, stats) +
-        getCandidateScore(snapshot, second.playerIds, second.genders, mode, stats);
-
-      const matchupPenalty = first.playerIds.reduce((penalty, playerId) => {
-        const playerStat = stats.get(playerId);
-        if (!playerStat) {
-          return penalty;
-        }
-
-        return penalty + second.playerIds.reduce((innerPenalty, opponentId) => {
-          const opponentStat = stats.get(opponentId);
-          if (!opponentStat) {
-            return innerPenalty;
-          }
-
-          return innerPenalty + (playerStat.recentOpponents.includes(opponentId) || opponentStat.recentOpponents.includes(playerId) ? 45 : 0);
-        }, 0);
-      }, 0);
-
-      // Keep queue order dominant so early units are matched first and queue is stable.
-      const queueOrderPenalty = (first.order + second.order) * 500;
-      const totalScore = candidateScore + matchupPenalty + Math.abs(first.playerIds.length - second.playerIds.length) * 10 + queueOrderPenalty;
-
-      if (!best || totalScore < best.score || (totalScore === best.score && first.order + second.order < best.order)) {
-        best = {
-          sourceUnitIds: [...first.unitIds, ...second.unitIds],
-          teamA: first.playerIds,
-          teamB: second.playerIds,
-          playerIds: [...first.playerIds, ...second.playerIds],
-          score: totalScore,
-          order: first.order + second.order,
-        };
-      }
+      return {
+        sourceUnitIds: [...first.unitIds, ...second.unitIds],
+        teamA: first.playerIds,
+        teamB: second.playerIds,
+        playerIds: [...first.playerIds, ...second.playerIds],
+      };
     }
   }
 
-  return best
-    ? {
-        sourceUnitIds: best.sourceUnitIds,
-        teamA: best.teamA,
-        teamB: best.teamB,
-        playerIds: best.playerIds,
-      }
-    : null;
+  return null;
 }
 
 export function startCourtMatch(

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BatchId } from '@/types/courtside';
@@ -22,6 +22,12 @@ function formatTimer(startedAt: string | null, nowMs: number) {
 }
 
 type BoardMode = 'admin' | 'public' | 'score';
+
+interface CustomQueuedGame {
+  id: string;
+  playerIds: [string, string, string, string];
+  createdAtMs: number;
+}
 
 export default function CourtsideBoard({
   initialBatchId = 1,
@@ -72,6 +78,9 @@ export default function CourtsideBoard({
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
   const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
+  const [customQueuedByBatch, setCustomQueuedByBatch] = useState<Record<BatchId, CustomQueuedGame[]>>({ 1: [], 2: [] });
+  const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
+  const autoFillRunningRef = useRef(false);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -99,9 +108,9 @@ export default function CourtsideBoard({
   const availableForCustom = useMemo(
     () =>
       activeBatch.players
-        .filter((player) => player.status === 'checked-in' && !activePlayers.has(player.id))
+        .filter((player) => player.status === 'checked-in')
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [activeBatch.players, activePlayers],
+    [activeBatch.players],
   );
 
   const sortedPlayers = useMemo(
@@ -143,6 +152,11 @@ export default function CourtsideBoard({
     [activeBatch.courts],
   );
 
+  const idleCourts = useMemo(
+    () => activeBatch.courts.filter((court) => court.status === 'idle'),
+    [activeBatch.courts],
+  );
+
   const breakPlayers = useMemo(
     () => activeBatch.players.filter((player) => player.status === 'break').sort((a, b) => a.name.localeCompare(b.name)),
     [activeBatch.players],
@@ -166,14 +180,62 @@ export default function CourtsideBoard({
     return getLeaderboardEntries(activeBatch);
   }, [activeBatch]);
 
+  const customQueuedMatches = useMemo(() => {
+    const playerById = new Map(activeBatch.players.map((player) => [player.id, player]));
+    const livePlayerIds = activePlayers;
+
+    return (customQueuedByBatch[activeBatch.batchId] ?? [])
+      .filter((game) =>
+        game.playerIds.every((id) => {
+          const player = playerById.get(id);
+          return Boolean(player && player.status === 'checked-in' && !livePlayerIds.has(id));
+        }),
+      )
+      .sort((a, b) => a.createdAtMs - b.createdAtMs)
+      .map((game, index) => ({
+        id: game.id,
+        courtId: game.id,
+        courtLabel: `Custom ${index + 1}`,
+        teamA: [playerById.get(game.playerIds[0])?.name ?? '-', playerById.get(game.playerIds[1])?.name ?? '-'],
+        teamB: [playerById.get(game.playerIds[2])?.name ?? '-', playerById.get(game.playerIds[3])?.name ?? '-'],
+        sourceUnitIds: [...game.playerIds],
+        mode: 'custom' as const,
+      }));
+  }, [activeBatch.batchId, activeBatch.players, activePlayers, customQueuedByBatch]);
+
   const upcomingMatches = useMemo(() => {
-    if (queuePausedByBatch[activeBatch.batchId]) {
-      return [];
-    }
-    return previewUpcomingMatches(activeBatch, activeBatch.activeMode, 999);
-  }, [activeBatch, queuePausedByBatch]);
+    const reservedPlayerIds = new Set(customQueuedMatches.flatMap((match) => match.sourceUnitIds));
+    const mixedMatches = previewUpcomingMatches(activeBatch, activeBatch.activeMode, 999).filter(
+      (match) => !match.sourceUnitIds.some((id) => reservedPlayerIds.has(id)),
+    );
+
+    const visibleMixed = mixedMatches.slice(0, 7);
+    return [...visibleMixed, ...customQueuedMatches];
+  }, [activeBatch, customQueuedMatches]);
 
   const queuePaused = queuePausedByBatch[activeBatch.batchId];
+  const autoFillEnabled = autoFillEnabledByBatch[activeBatch.batchId];
+
+  useEffect(() => {
+    if (publicView || scoreOnly || queuePaused || !autoFillEnabled) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (autoFillRunningRef.current) {
+        return;
+      }
+
+      autoFillRunningRef.current = true;
+      Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
+        autoFillRunningRef.current = false;
+      });
+    }, 15_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, publicView, queuePaused, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -199,9 +261,68 @@ export default function CourtsideBoard({
       return;
     }
 
+    const nextCustom: CustomQueuedGame = {
+      id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      playerIds: [customSelection[0], customSelection[1], customSelection[2], customSelection[3]],
+      createdAtMs: Date.now(),
+    };
+
+    setCustomQueuedByBatch((current) => {
+      const currentGames = current[activeBatch.batchId] ?? [];
+      const selected = new Set(nextCustom.playerIds);
+      const filtered = currentGames.filter((game) => !game.playerIds.some((id) => selected.has(id)));
+      return {
+        ...current,
+        [activeBatch.batchId]: [...filtered, nextCustom],
+      };
+    });
+
     await prioritizePlayersForQueue(activeBatch.batchId, customSelection);
     setCustomSelection([]);
     setCustomSearch('');
+  };
+
+  const handleDeleteQueueMatch = async (sourceUnitIds: string[]) => {
+    const sourceSet = new Set(sourceUnitIds);
+    setCustomQueuedByBatch((current) => ({
+      ...current,
+      [activeBatch.batchId]: (current[activeBatch.batchId] ?? []).filter(
+        (game) => !game.playerIds.some((id) => sourceSet.has(id)),
+      ),
+    }));
+
+    await removeQueueMatch(activeBatch.batchId, sourceUnitIds);
+  };
+
+  const handlePlaceQueueOnCourt = async (courtId: string, sourceUnitIds: string[], mode: 'mixed' | 'custom') => {
+    const pairById = new Map(activeBatch.pairs.map((pair) => [pair.id, pair]));
+    const selectedPlayerIds: string[] = [];
+
+    for (const unitId of sourceUnitIds) {
+      const pair = pairById.get(unitId);
+      if (pair) {
+        selectedPlayerIds.push(...pair.playerIds);
+      } else {
+        selectedPlayerIds.push(unitId);
+      }
+    }
+
+    const deduped = Array.from(new Set(selectedPlayerIds)).slice(0, 4);
+    if (deduped.length !== 4) {
+      return;
+    }
+
+    await startMatchOnCourt(activeBatch.batchId, courtId, 'custom', { playerIds: deduped });
+
+    if (mode === 'custom') {
+      const sourceSet = new Set(sourceUnitIds);
+      setCustomQueuedByBatch((current) => ({
+        ...current,
+        [activeBatch.batchId]: (current[activeBatch.batchId] ?? []).filter(
+          (game) => !game.playerIds.some((id) => sourceSet.has(id)),
+        ),
+      }));
+    }
   };
 
   const handleAddPlayer = () => {
@@ -308,11 +429,6 @@ export default function CourtsideBoard({
   if (publicView) {
     const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle');
     const nextMatch = upcomingMatches[0];
-    const announcement = nextOpenCourt && nextMatch
-      ? `Next up on ${nextOpenCourt.label}: ${nextMatch.teamA.join(' + ')} vs ${nextMatch.teamB.join(' + ')}`
-      : nextMatch
-        ? `Next ready match: ${nextMatch.teamA.join(' + ')} vs ${nextMatch.teamB.join(' + ')}`
-        : 'No ready matches yet';
 
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
@@ -352,9 +468,29 @@ export default function CourtsideBoard({
             </div>
             <div>
               <div className="text-[11px] font-black uppercase tracking-[0.3em] text-amber-100/90">Now Calling</div>
-              <div className="mt-2 text-lg font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-2xl">
-                {announcement}
-              </div>
+              {nextMatch ? (
+                <>
+                  <div className="mt-2 text-xs font-black uppercase tracking-[0.22em] text-white/90 sm:text-sm">NEXT READY MATCH:</div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                    <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
+                      <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team A</div>
+                      <div className="mt-1">{nextMatch.teamA.join(' + ')}</div>
+                    </div>
+                    <div className="text-center text-sm font-black uppercase tracking-[0.3em] text-amber-50">VS</div>
+                    <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
+                      <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team B</div>
+                      <div className="mt-1">{nextMatch.teamB.join(' + ')}</div>
+                    </div>
+                  </div>
+                  {nextOpenCourt ? (
+                    <div className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-50/90">On {nextOpenCourt.label}</div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="mt-2 text-lg font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-2xl">
+                  NO READY MATCHES YET
+                </div>
+              )}
             </div>
           </div>
         </section>
@@ -756,7 +892,7 @@ export default function CourtsideBoard({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <div className="mt-1 text-xs text-slate-300/80">Showing all ready matches</div>
+                <div className="mt-1 text-xs text-slate-300/80">Showing 5 to 7 mixed matches, plus custom queue games</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -774,6 +910,22 @@ export default function CourtsideBoard({
                   }`}
                 >
                   {queuePaused ? 'Play queue' : 'Pause queue'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAutoFillEnabledByBatch((current) => ({
+                      ...current,
+                      [activeBatch.batchId]: !current[activeBatch.batchId],
+                    }))
+                  }
+                  className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                    autoFillEnabled
+                      ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15'
+                      : 'border-white/10 bg-white/5 text-slate-100/90 hover:bg-white/10'
+                  }`}
+                >
+                  {autoFillEnabled ? 'Auto-fill 15s: On' : 'Auto-fill 15s: Off'}
                 </button>
                 <button
                   type="button"
@@ -805,7 +957,7 @@ export default function CourtsideBoard({
                     <div className="flex items-center gap-2">
                       <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.sourceUnitIds[0], 'up')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↑</button>
                       <button type="button" onClick={() => moveQueueUnit(activeBatch.batchId, match.sourceUnitIds[0], 'down')} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">↓</button>
-                      <button type="button" onClick={() => removeQueueMatch(activeBatch.batchId, match.sourceUnitIds)} className="rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-100">Delete</button>
+                      <button type="button" onClick={() => handleDeleteQueueMatch(match.sourceUnitIds)} className="rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-100">Delete</button>
                       <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed' : 'Custom'}</span>
                     </div>
                   </div>
@@ -814,6 +966,20 @@ export default function CourtsideBoard({
                     <div className="text-center text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">VS</div>
                     <TeamCard label="Team 2" players={match.teamB} alignRight />
                   </div>
+                  {idleCourts.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
+                      {idleCourts.map((court) => (
+                        <button
+                          key={`${match.id}-${court.id}`}
+                          type="button"
+                          onClick={() => handlePlaceQueueOnCourt(court.id, match.sourceUnitIds, match.mode)}
+                          className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-100"
+                        >
+                          {court.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
