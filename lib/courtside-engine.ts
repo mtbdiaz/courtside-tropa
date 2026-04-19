@@ -5,6 +5,8 @@ import type {
   CustomMatchSelection,
   Gender,
   MatchMode,
+  MatchPreview,
+  LeaderboardEntry,
   Pair,
   Player,
   QueueUnit,
@@ -125,6 +127,284 @@ function getPairLabel(snapshot: BatchSnapshot, pair: Pair) {
   const first = players.get(pair.playerIds[0])?.name ?? 'Player 1';
   const second = players.get(pair.playerIds[1])?.name ?? 'Player 2';
   return `${first} + ${second}`;
+}
+
+function getCompletedMatches(snapshot: BatchSnapshot) {
+  return [...snapshot.history]
+    .filter((match) => match.status === 'complete')
+    .sort((a, b) => (b.endedAt ?? b.startedAt).localeCompare(a.endedAt ?? a.startedAt));
+}
+
+function pushUnique(list: string[], value: string, limit = 6) {
+  if (!list.includes(value)) {
+    list.push(value);
+  }
+
+  if (list.length > limit) {
+    list.splice(limit);
+  }
+}
+
+export function getPlayerStats(snapshot: BatchSnapshot) {
+  const players = getPlayerMap(snapshot);
+  const stats = new Map(
+    snapshot.players.map((player) => [player.id, {
+      playerId: player.id,
+      name: player.name,
+      wins: 0,
+      gamesPlayed: 0,
+      lastPlayedAt: null as string | null,
+      recentTeammates: [] as string[],
+      recentOpponents: [] as string[],
+      createdAt: player.createdAt,
+    }])
+  );
+
+  for (const match of getCompletedMatches(snapshot)) {
+    const playerIds = match.playerIds.filter((id) => players.has(id));
+    if (playerIds.length !== 4) {
+      continue;
+    }
+
+    const teamA = playerIds.slice(0, 2);
+    const teamB = playerIds.slice(2, 4);
+    const winnerIds = match.winner === 'A' ? teamA : match.winner === 'B' ? teamB : [];
+
+    for (const playerId of playerIds) {
+      const entry = stats.get(playerId);
+      if (!entry) {
+        continue;
+      }
+
+      entry.gamesPlayed += 1;
+      entry.lastPlayedAt = entry.lastPlayedAt ?? match.endedAt ?? match.startedAt;
+      if (winnerIds.includes(playerId)) {
+        entry.wins += 1;
+      }
+    }
+
+    for (const playerId of teamA) {
+      const entry = stats.get(playerId);
+      if (!entry) {
+        continue;
+      }
+
+      teamA.forEach((mateId) => {
+        if (mateId !== playerId) {
+          pushUnique(entry.recentTeammates, mateId);
+        }
+      });
+
+      teamB.forEach((opponentId) => pushUnique(entry.recentOpponents, opponentId));
+    }
+
+    for (const playerId of teamB) {
+      const entry = stats.get(playerId);
+      if (!entry) {
+        continue;
+      }
+
+      teamB.forEach((mateId) => {
+        if (mateId !== playerId) {
+          pushUnique(entry.recentTeammates, mateId);
+        }
+      });
+
+      teamA.forEach((opponentId) => pushUnique(entry.recentOpponents, opponentId));
+    }
+  }
+
+  return stats;
+}
+
+export function getLeaderboardEntries(snapshot: BatchSnapshot): LeaderboardEntry[] {
+  const stats = getPlayerStats(snapshot);
+
+  const entries = snapshot.players.map((player) => {
+    const entry = stats.get(player.id)!;
+    return {
+      playerId: player.id,
+      name: player.name,
+      wins: entry.wins,
+      gamesPlayed: entry.gamesPlayed,
+      rank: 0,
+    } satisfies LeaderboardEntry;
+  });
+
+  entries.sort((a, b) => {
+    if (b.wins !== a.wins) {
+      return b.wins - a.wins;
+    }
+
+    if (a.gamesPlayed !== b.gamesPlayed) {
+      return a.gamesPlayed - b.gamesPlayed;
+    }
+
+    return a.name.localeCompare(b.name);
+  });
+
+  let currentRank = 0;
+  let lastWins: number | null = null;
+  entries.forEach((entry, index) => {
+    if (entry.wins !== lastWins) {
+      currentRank = index + 1;
+      lastWins = entry.wins;
+    }
+
+    entry.rank = currentRank;
+  });
+
+  return entries;
+}
+
+function getCandidateScore(
+  snapshot: BatchSnapshot,
+  playerIds: string[],
+  teamGenders: Gender[],
+  mode: MatchMode,
+  stats: Map<string, ReturnType<typeof getPlayerStats> extends Map<string, infer Entry> ? Entry : never>
+) {
+  const now = Date.now();
+  let score = 0;
+
+  const playerEntries = playerIds.map((id) => ({
+    id,
+    stat: stats.get(id),
+    player: snapshot.players.find((entry) => entry.id === id),
+  }));
+
+  for (const entry of playerEntries) {
+    if (!entry.player || !entry.stat) {
+      continue;
+    }
+
+    score += entry.stat.gamesPlayed * 90;
+    score += entry.stat.wins * 12;
+
+    const reference = entry.stat.lastPlayedAt ?? entry.player.createdAt;
+    const waitMinutes = Math.max(0, (now - new Date(reference).getTime()) / 60000);
+    score -= waitMinutes * 8;
+  }
+
+  if (mode === 'mixed') {
+    const males = teamGenders.filter((gender) => gender === 'M').length;
+    const females = teamGenders.filter((gender) => gender === 'F').length;
+    score += males === 1 && females === 1 ? 0 : 35;
+  }
+
+  const combos = [
+    [playerIds[0], playerIds[1]],
+    [playerIds[2], playerIds[3]],
+  ] as const;
+
+  for (const [firstId, secondId] of combos) {
+    const firstStat = stats.get(firstId);
+    const secondStat = stats.get(secondId);
+    if (!firstStat || !secondStat) {
+      continue;
+    }
+
+    if (firstStat.recentTeammates.includes(secondId) || secondStat.recentTeammates.includes(firstId)) {
+      score += 120;
+    }
+  }
+
+  for (const firstId of [playerIds[0], playerIds[1]]) {
+    const firstStat = stats.get(firstId);
+    if (!firstStat) {
+      continue;
+    }
+
+    for (const secondId of [playerIds[2], playerIds[3]]) {
+      const secondStat = stats.get(secondId);
+      if (!secondStat) {
+        continue;
+      }
+
+      if (firstStat.recentOpponents.includes(secondId) || secondStat.recentOpponents.includes(firstId)) {
+        score += 40;
+      }
+    }
+  }
+
+  return score;
+}
+
+function collectTeamCandidates(snapshot: BatchSnapshot, units: QueueUnit[], mode: MatchMode) {
+  const playerMap = getPlayerMap(snapshot);
+  const candidates: Array<{
+    unitIds: string[];
+    playerIds: string[];
+    genders: Gender[];
+    label: string;
+    order: number;
+  }> = [];
+
+  units.forEach((unit, index) => {
+    if (unit.type === 'pair') {
+      if (!isPairEligibleForMode(unit.genders, mode)) {
+        return;
+      }
+
+      candidates.push({
+        unitIds: [unit.id],
+        playerIds: unit.playerIds,
+        genders: unit.genders,
+        label: unit.label,
+        order: index,
+      });
+      return;
+    }
+
+    for (let otherIndex = index + 1; otherIndex < units.length; otherIndex += 1) {
+      const other = units[otherIndex];
+      if (other.type !== 'player') {
+        continue;
+      }
+
+      const combinedGenders = [unit.genders[0], other.genders[0]].filter(Boolean) as Gender[];
+      if (!isPairEligibleForMode(combinedGenders, mode)) {
+        continue;
+      }
+
+      candidates.push({
+        unitIds: [unit.id, other.id],
+        playerIds: [unit.playerIds[0], other.playerIds[0]],
+        genders: combinedGenders,
+        label: `${playerMap.get(unit.playerIds[0])?.name ?? unit.label} + ${playerMap.get(other.playerIds[0])?.name ?? other.label}`,
+        order: index,
+      });
+    }
+  });
+
+  return candidates;
+}
+
+export function previewUpcomingMatches(snapshot: BatchSnapshot, mode: MatchMode, limit = 6): MatchPreview[] {
+  const working = cloneSnapshot(snapshot);
+  const previews: MatchPreview[] = [];
+
+  while (previews.length < limit) {
+    const match = findNextMatch(working, mode);
+    if (!match) {
+      break;
+    }
+
+    const nextIndex = previews.length + 1;
+    previews.push({
+      id: `preview-${nextIndex}`,
+      courtId: `preview-${nextIndex}`,
+      courtLabel: `Match ${nextIndex}`,
+      teamA: match.teamA,
+      teamB: match.teamB,
+      sourceUnitIds: match.sourceUnitIds,
+      mode,
+    });
+
+    working.queueOrder = removeUnitIds(working.queueOrder, match.sourceUnitIds);
+  }
+
+  return previews;
 }
 
 export function resolveQueueUnits(snapshot: BatchSnapshot): QueueUnit[] {
@@ -325,51 +605,6 @@ function isPairEligibleForMode(genders: Gender[], mode: MatchMode) {
   return genders.includes('M') && genders.includes('F') && genders.length === 2;
 }
 
-function canSingletonsFormTeam(first: QueueUnit, second: QueueUnit, mode: MatchMode) {
-  if (first.type !== 'player' || second.type !== 'player') {
-    return false;
-  }
-
-  const genders = [...first.genders, ...second.genders];
-  return isPairEligibleForMode(genders as Gender[], mode);
-}
-
-function findTeamContainer(units: QueueUnit[], mode: MatchMode, usedIds: Set<string>, startIndex = 0) {
-  for (let index = startIndex; index < units.length; index += 1) {
-    const unit = units[index];
-    if (usedIds.has(unit.id)) {
-      continue;
-    }
-
-    if (unit.type === 'pair') {
-      if (isPairEligibleForMode(unit.genders, mode)) {
-        return {
-          unitIds: [unit.id],
-          playerIds: unit.playerIds,
-        };
-      }
-
-      continue;
-    }
-
-    for (let otherIndex = index + 1; otherIndex < units.length; otherIndex += 1) {
-      const other = units[otherIndex];
-      if (usedIds.has(other.id)) {
-        continue;
-      }
-
-      if (canSingletonsFormTeam(unit, other, mode)) {
-        return {
-          unitIds: [unit.id, other.id],
-          playerIds: [...unit.playerIds, ...other.playerIds],
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
 function expandSelectedPlayers(snapshot: BatchSnapshot, playerIds: string[]) {
   const nextUnitIds: string[] = [];
   const nextPlayerIds: string[] = [];
@@ -423,24 +658,75 @@ export function findNextMatch(snapshot: BatchSnapshot, mode: MatchMode, selected
     };
   }
 
-  const usedIds = new Set<string>();
-  const firstTeam = findTeamContainer(orderedUnits, mode, usedIds);
-  if (!firstTeam) {
+  const candidates = collectTeamCandidates(snapshot, orderedUnits, mode);
+  if (candidates.length < 2) {
     return null;
   }
 
-  firstTeam.unitIds.forEach((unitId) => usedIds.add(unitId));
-  const secondTeam = findTeamContainer(orderedUnits, mode, usedIds);
-  if (!secondTeam) {
-    return null;
+  const stats = getPlayerStats(snapshot);
+  let best: {
+    sourceUnitIds: string[];
+    teamA: string[];
+    teamB: string[];
+    playerIds: string[];
+    score: number;
+    order: number;
+  } | null = null;
+
+  for (let firstIndex = 0; firstIndex < candidates.length; firstIndex += 1) {
+    const first = candidates[firstIndex];
+
+    for (let secondIndex = firstIndex + 1; secondIndex < candidates.length; secondIndex += 1) {
+      const second = candidates[secondIndex];
+
+      const overlaps = first.unitIds.some((unitId) => second.unitIds.includes(unitId));
+      if (overlaps) {
+        continue;
+      }
+
+      const candidateScore =
+        getCandidateScore(snapshot, first.playerIds, first.genders, mode, stats) +
+        getCandidateScore(snapshot, second.playerIds, second.genders, mode, stats);
+
+      const matchupPenalty = first.playerIds.reduce((penalty, playerId) => {
+        const playerStat = stats.get(playerId);
+        if (!playerStat) {
+          return penalty;
+        }
+
+        return penalty + second.playerIds.reduce((innerPenalty, opponentId) => {
+          const opponentStat = stats.get(opponentId);
+          if (!opponentStat) {
+            return innerPenalty;
+          }
+
+          return innerPenalty + (playerStat.recentOpponents.includes(opponentId) || opponentStat.recentOpponents.includes(playerId) ? 45 : 0);
+        }, 0);
+      }, 0);
+
+      const totalScore = candidateScore + matchupPenalty + Math.abs(first.playerIds.length - second.playerIds.length) * 10 + first.order + second.order;
+
+      if (!best || totalScore < best.score || (totalScore === best.score && first.order + second.order < best.order)) {
+        best = {
+          sourceUnitIds: [...first.unitIds, ...second.unitIds],
+          teamA: first.playerIds,
+          teamB: second.playerIds,
+          playerIds: [...first.playerIds, ...second.playerIds],
+          score: totalScore,
+          order: first.order + second.order,
+        };
+      }
+    }
   }
 
-  return {
-    sourceUnitIds: [...firstTeam.unitIds, ...secondTeam.unitIds],
-    teamA: firstTeam.playerIds,
-    teamB: secondTeam.playerIds,
-    playerIds: [...firstTeam.playerIds, ...secondTeam.playerIds],
-  };
+  return best
+    ? {
+        sourceUnitIds: best.sourceUnitIds,
+        teamA: best.teamA,
+        teamB: best.teamB,
+        playerIds: best.playerIds,
+      }
+    : null;
 }
 
 export function startCourtMatch(

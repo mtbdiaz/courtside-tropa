@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BatchId } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
+import { getLeaderboardEntries, previewUpcomingMatches } from '@/lib/courtside-engine';
 import { CircleOff, LogOut, Plus, Search, Waves } from 'lucide-react';
 
 function formatTimer(startedAt: string | null, nowMs: number) {
@@ -24,7 +25,6 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
   const router = useRouter();
   const {
     activeBatch,
-    queueUnits,
     isReady,
     syncStatus,
     authEmail,
@@ -90,8 +90,6 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
       .slice(0, 8);
   }, [availableForCustom, customSearch]);
 
-  const queuePreview = useMemo(() => queueUnits.slice(0, 20), [queueUnits]);
-
   const liveCourts = useMemo(
     () => activeBatch.courts.filter((court) => court.status === 'live'),
     [activeBatch.courts],
@@ -117,28 +115,10 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
     activeBatch.courts[activeBatch.courts.length - 1]?.status === 'idle';
 
   const leaderboard = useMemo(() => {
-    const wins = new Map<string, number>();
+    return getLeaderboardEntries(activeBatch);
+  }, [activeBatch]);
 
-    for (const match of activeBatch.history) {
-      if (match.status !== 'complete') {
-        continue;
-      }
-
-      const winners = match.winner === 'A' ? match.teamA : match.winner === 'B' ? match.teamB : [];
-      for (const player of winners) {
-        wins.set(player, (wins.get(player) ?? 0) + 1);
-      }
-    }
-
-    return Array.from(wins.entries())
-      .map(([name, totalWins]) => ({ name, totalWins }))
-      .sort((a, b) => {
-        if (b.totalWins !== a.totalWins) {
-          return b.totalWins - a.totalWins;
-        }
-        return a.name.localeCompare(b.name);
-      });
-  }, [activeBatch.history]);
+  const upcomingMatches = useMemo(() => previewUpcomingMatches(activeBatch, activeBatch.activeMode, 6), [activeBatch]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -240,38 +220,56 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
 
         <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
-            <h3 className="text-xl font-semibold text-white">Queue</h3>
-            <p className="mt-1 text-sm text-slate-300/80">Next players are listed in order.</p>
-            <div className="mt-4 space-y-2">
-              {queuePreview.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">Queue is empty right now.</div> : null}
-              {queuePreview.map((unit, index) => (
-                <div key={unit.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
-                  <div className="flex items-center gap-3">
-                    <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{index + 1}</span>
-                    <span className="font-medium text-white">{unit.label}</span>
+            <h3 className="text-xl font-semibold text-white">Upcoming Matches</h3>
+            <p className="mt-1 text-sm text-slate-300/80">Ready matches are shown in queue order.</p>
+            <div className="mt-4 space-y-3">
+              {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No ready matches yet.</div> : null}
+              {upcomingMatches.map((match, index) => (
+                <div key={match.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-amber-200/80">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.75)]" />
+                      Ready match {index + 1}
+                    </div>
+                    <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed Doubles' : 'Custom Match'}</div>
                   </div>
-                  <span className="text-xs text-slate-300/80">{unit.type === 'pair' ? 'Pair' : 'Single'}</span>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                    <TeamCard label="Team 1" players={match.teamA} />
+                    <div className="text-center text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">VS</div>
+                    <TeamCard label="Team 2" players={match.teamB} alignRight />
+                  </div>
                 </div>
               ))}
             </div>
           </article>
 
           <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
-            <h3 className="text-xl font-semibold text-white">Current Matches</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xl font-semibold text-white">Current Matches</h3>
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-amber-200/80">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.75)] animate-pulse" />
+                Live
+              </div>
+            </div>
             <div className="mt-4 space-y-3">
               {liveCourts.length === 0 ? (
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No live matches.</div>
               ) : null}
               {liveCourts.map((court) => (
-                <div key={court.id} className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">
+                <div key={court.id} className="rounded-[1.5rem] border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-4 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.2)]">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-white">{court.label}</span>
-                    <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
+                    <span className="text-sm font-semibold uppercase tracking-[0.28em] text-amber-200">{court.label}</span>
+                    <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100">
                       {formatTimer(court.startedAt, nowMs)}
                     </span>
                   </div>
-                  <div className="mt-3 text-slate-200/90">Team A: {court.teamA.join(', ')}</div>
-                  <div className="mt-1 text-slate-200/90">Team B: {court.teamB.join(', ')}</div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                    <TeamCard label="Team 1" players={court.teamA} />
+                    <div className="text-center text-xl font-black tracking-[0.45em] text-amber-200/80">VS</div>
+                    <TeamCard label="Team 2" players={court.teamB} alignRight />
+                  </div>
                 </div>
               ))}
             </div>
@@ -279,18 +277,19 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
         </section>
 
         <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
-          <h3 className="text-xl font-semibold text-white">Leaderboard (Total Wins)</h3>
+          <h3 className="text-xl font-semibold text-white">Leaderboard</h3>
+          <p className="mt-1 text-sm text-slate-300/80">Based only on completed matches.</p>
           <div className="mt-4 space-y-2">
             {leaderboard.length === 0 ? (
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No completed matches yet.</div>
             ) : null}
-            {leaderboard.map((entry, index) => (
-              <div key={entry.name} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
+            {leaderboard.map((entry) => (
+              <div key={entry.playerId} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
                 <div className="flex items-center gap-3">
-                  <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{index + 1}</span>
+                  <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{entry.rank}</span>
                   <span className="font-medium text-white">{entry.name}</span>
                 </div>
-                <span className="text-amber-100">{entry.totalWins} wins</span>
+                <span className="text-slate-300/80">{entry.wins} wins • {entry.gamesPlayed} games</span>
               </div>
             ))}
           </div>
@@ -435,19 +434,26 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <p className="text-sm text-slate-300/80">Clear order for the next players.</p>
+                <p className="text-sm text-slate-300/80">Ready matches in order, not raw players.</p>
               </div>
-              <span className="text-xs text-slate-300/80">{queueUnits.length} units</span>
+              <span className="text-xs text-slate-300/80">{upcomingMatches.length} ready matches</span>
             </div>
-            <div className="mt-4 space-y-2">
-              {queuePreview.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">Queue is empty.</div> : null}
-              {queuePreview.map((unit, index) => (
-                <div key={unit.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
-                  <div className="flex items-center gap-3">
-                    <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{index + 1}</span>
-                    <span className="font-medium text-white">{unit.label}</span>
+            <div className="mt-4 space-y-3">
+              {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">Queue is empty.</div> : null}
+              {upcomingMatches.map((match, index) => (
+                <div key={match.id} className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{index + 1}</span>
+                      <span className="font-medium text-white">{match.courtLabel}</span>
+                    </div>
+                    <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed' : 'Custom'}</span>
                   </div>
-                  <span className="text-xs text-slate-300/80">{unit.type === 'pair' ? 'Pair' : 'Single'}</span>
+                  <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                    <TeamCard label="Team 1" players={match.teamA} />
+                    <div className="text-center text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">VS</div>
+                    <TeamCard label="Team 2" players={match.teamB} alignRight />
+                  </div>
                 </div>
               ))}
             </div>
@@ -719,5 +725,18 @@ export default function CourtsideBoard({ publicView = false, initialBatchId = 1 
         </div>
       </section>
     </main>
+  );
+}
+
+function TeamCard({ label, players, alignRight = false }: { label: string; players: string[]; alignRight?: boolean }) {
+  return (
+    <div className={`rounded-2xl border border-white/10 bg-black/20 p-3 ${alignRight ? 'text-right' : 'text-left'}`}>
+      <div className="text-[11px] uppercase tracking-[0.28em] text-slate-400/80">{label}</div>
+      <div className="mt-2 space-y-1 text-sm text-white">
+        {players.map((player) => (
+          <div key={player} className="rounded-xl bg-white/5 px-3 py-2">{player}</div>
+        ))}
+      </div>
+    </div>
   );
 }

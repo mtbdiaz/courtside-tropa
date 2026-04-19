@@ -67,6 +67,24 @@ export interface MatchRecord {
   notes?: string;
 }
 
+export interface LeaderboardEntry {
+  playerId: string;
+  name: string;
+  wins: number;
+  gamesPlayed: number;
+  rank: number;
+}
+
+export interface MatchPreview {
+  id: string;
+  courtId: string;
+  courtLabel: string;
+  teamA: string[];
+  teamB: string[];
+  sourceUnitIds: string[];
+  mode: MatchMode;
+}
+
 export interface BatchSnapshot {
   batchId: BatchId;
   title: string;

@@ -287,26 +287,34 @@ function normalizeSnapshot(input: {
     };
   });
 
-  const completedHistory = [...input.histories]
-    .sort((a, b) => (b.played_at ?? '').localeCompare(a.played_at ?? ''))
-    .map((row) => ({
-      id: row.match_id ?? row.id,
-      batchId: input.batchId,
-      courtId: `court-${row.court_number ?? 0}`,
-      courtLabel: `Court ${row.court_number ?? '-'}`,
-      mode: 'custom' as MatchMode,
-      sourceUnitIds: [],
-      playerIds: [],
-      teamA: [row.team1_player1_name, row.team1_player2_name].filter(Boolean) as string[],
-      teamB: [row.team2_player1_name, row.team2_player2_name].filter(Boolean) as string[],
-      scoreA: row.score_team1,
-      scoreB: row.score_team2,
-      winner: winnerToAB(row.winner_team),
-      status: 'complete' as const,
-      startedAt: row.played_at ?? nowIso(),
-      endedAt: row.played_at ?? nowIso(),
-      notes: row.notes ?? undefined,
-    }));
+  const historyByMatchId = new Map(input.histories.filter((row) => row.match_id).map((row) => [row.match_id as string, row]));
+
+  const completedHistory = [...input.matches]
+    .filter((match) => match.status === 'completed')
+    .sort((a, b) => (b.end_time ?? b.start_time ?? '').localeCompare(a.end_time ?? a.start_time ?? ''))
+    .map((match) => {
+      const matchHistory = historyByMatchId.get(match.id);
+      const allIds = [match.team1_player1_id, match.team1_player2_id, match.team2_player1_id, match.team2_player2_id].filter(Boolean) as string[];
+
+      return {
+        id: match.id,
+        batchId: input.batchId,
+        courtId: match.court_id ?? '',
+        courtLabel: `Court ${matchHistory?.court_number ?? input.courts.find((court) => court.id === match.court_id)?.court_number ?? '-'}`,
+        mode: modeFromPlayers(allIds.map((id) => playersById.get(id)?.gender ?? 'M')),
+        sourceUnitIds: allIds,
+        playerIds: allIds,
+        teamA: [match.team1_player1_id, match.team1_player2_id].filter(Boolean).map((id) => playersById.get(id!)?.name ?? 'Unknown'),
+        teamB: [match.team2_player1_id, match.team2_player2_id].filter(Boolean).map((id) => playersById.get(id!)?.name ?? 'Unknown'),
+        scoreA: match.score_team1,
+        scoreB: match.score_team2,
+        winner: winnerToAB(match.winner_team),
+        status: 'complete' as const,
+        startedAt: match.start_time ?? matchHistory?.played_at ?? nowIso(),
+        endedAt: match.end_time ?? matchHistory?.played_at ?? nowIso(),
+        notes: matchHistory?.notes ?? undefined,
+      };
+    });
 
   return {
     ...createEmptyBatchSnapshot(input.batchId),
