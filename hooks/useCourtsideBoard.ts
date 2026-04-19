@@ -648,7 +648,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       batch_id: dbBatchId,
       name: name.trim(),
       gender,
-      status: 'break',
+      status: 'checked-in',
       created_at: nowIso(),
     });
 
@@ -670,7 +670,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
           batch_id: dbBatchId,
           name: value,
           gender,
-          status: 'break',
+          status: 'checked-in',
           created_at: nowIso(),
         }))
     );

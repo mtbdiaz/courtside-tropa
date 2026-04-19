@@ -116,7 +116,7 @@ export default function CourtsideBoard({
   const customSearchResults = useMemo(() => {
     const query = customSearch.trim().toLowerCase();
     if (!query) {
-      return [];
+      return availableForCustom;
     }
 
     return availableForCustom
