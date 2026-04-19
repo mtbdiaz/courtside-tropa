@@ -723,8 +723,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
   const setCourtCount = useCallback(async (batchId: BatchId, count: number) => {
     const supabase = supabaseRef.current;
-    const dbBatchId = withBatchDbId(batchId);
-    if (!supabase || !dbBatchId) {
+    let dbBatchId = withBatchDbId(batchId);
+    if (!supabase) {
+      return;
+    }
+
+    if (!dbBatchId) {
+      await loadFromDatabase();
+      dbBatchId = withBatchDbId(batchId);
+    }
+
+    if (!dbBatchId) {
+      console.error('Set court count failed: missing batch mapping', { batchId });
       return;
     }
 
@@ -764,8 +774,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
   const addSinglePlayer = useCallback(async (batchId: BatchId, name: string, gender: Gender) => {
     const supabase = supabaseRef.current;
-    const dbBatchId = withBatchDbId(batchId);
-    if (!supabase || !dbBatchId || !name.trim()) {
+    let dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !name.trim()) {
+      return;
+    }
+
+    if (!dbBatchId) {
+      await loadFromDatabase();
+      dbBatchId = withBatchDbId(batchId);
+    }
+
+    if (!dbBatchId) {
+      console.error('Add player failed: missing batch mapping', { batchId, name });
       return;
     }
 
@@ -787,8 +807,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
   const addBulk = useCallback(async (batchId: BatchId, names: string[], gender: Gender) => {
     const supabase = supabaseRef.current;
-    const dbBatchId = withBatchDbId(batchId);
-    if (!supabase || !dbBatchId || names.length === 0) {
+    let dbBatchId = withBatchDbId(batchId);
+    if (!supabase || names.length === 0) {
+      return;
+    }
+
+    if (!dbBatchId) {
+      await loadFromDatabase();
+      dbBatchId = withBatchDbId(batchId);
+    }
+
+    if (!dbBatchId) {
+      console.error('Bulk add players failed: missing batch mapping', { batchId, count: names.length });
       return;
     }
 
