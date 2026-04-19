@@ -383,6 +383,9 @@ function collectTeamCandidates(snapshot: BatchSnapshot, units: QueueUnit[], mode
 export function previewUpcomingMatches(snapshot: BatchSnapshot, mode: MatchMode, limit = 6): MatchPreview[] {
   const working = cloneSnapshot(snapshot);
   const previews: MatchPreview[] = [];
+  const players = getPlayerMap(snapshot);
+
+  const toName = (id: string) => players.get(id)?.name ?? id;
 
   while (previews.length < limit) {
     const match = findNextMatch(working, mode);
@@ -395,8 +398,8 @@ export function previewUpcomingMatches(snapshot: BatchSnapshot, mode: MatchMode,
       id: `preview-${nextIndex}`,
       courtId: `preview-${nextIndex}`,
       courtLabel: `Match ${nextIndex}`,
-      teamA: match.teamA,
-      teamB: match.teamB,
+      teamA: match.teamA.map(toName),
+      teamB: match.teamB.map(toName),
       sourceUnitIds: match.sourceUnitIds,
       mode,
     });

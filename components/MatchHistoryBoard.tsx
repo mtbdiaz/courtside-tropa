@@ -27,7 +27,6 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">Admin</p>
             <h2 className="text-display mt-2 text-3xl font-semibold sm:text-4xl">Match History</h2>
-            <p className="mt-2 text-sm text-slate-200/85">Separated from dashboard to keep operations focused.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {[1, 2].map((batchId) => (
@@ -53,7 +52,7 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
 
       <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
         <div className="space-y-3">
-          {completed.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No completed matches yet.</div> : null}
+          {completed.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">None</div> : null}
           {completed.map((match) => (
             <article key={match.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
