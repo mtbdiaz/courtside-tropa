@@ -74,7 +74,7 @@ export default function CourtsideBoard({
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
   const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
-  const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
+  const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>({ 1: true, 2: true });
   const autoFillRunningRef = useRef(false);
 
   useEffect(() => {
@@ -198,6 +198,13 @@ export default function CourtsideBoard({
   useEffect(() => {
     if (publicView || scoreOnly || !autoFillEnabled) {
       return;
+    }
+
+    if (!autoFillRunningRef.current) {
+      autoFillRunningRef.current = true;
+      Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
+        autoFillRunningRef.current = false;
+      });
     }
 
     const intervalId = window.setInterval(() => {
