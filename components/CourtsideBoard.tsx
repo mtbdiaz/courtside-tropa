@@ -390,42 +390,94 @@ export default function CourtsideBoard({
           <div className="pointer-events-none absolute -left-16 top-0 h-36 w-36 rounded-full bg-amber-200/20 blur-3xl" />
           <div className="pointer-events-none absolute -right-16 bottom-0 h-36 w-36 rounded-full bg-rose-200/20 blur-3xl" />
 
-          <div className="relative flex items-start gap-3">
-            <div className="mt-1 flex h-3 w-3 items-center justify-center">
-              <span className="absolute h-3 w-3 animate-ping rounded-full bg-emerald-300/80" />
-              <span className="relative h-2.5 w-2.5 rounded-full bg-emerald-300" />
-            </div>
-            <div>
+          <div className="relative space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-3 w-3 items-center justify-center">
+                <span className="absolute h-3 w-3 animate-ping rounded-full bg-emerald-300/80" />
+                <span className="relative h-2.5 w-2.5 rounded-full bg-emerald-300" />
+              </div>
               <div className="text-[11px] font-black uppercase tracking-[0.3em] text-amber-100/90">Now Calling</div>
-              {nextMatch ? (
-                <>
-                  <div className="mt-2 text-xs font-black uppercase tracking-[0.22em] text-white/90 sm:text-sm">NEXT READY MATCHES:</div>
-                  <div className="mt-2 space-y-2">
-                    {nextTwoMatches.map((match, idx) => (
-                      <div key={match.id} className="grid gap-2 sm:grid-cols-[auto_1fr_auto_1fr] sm:items-center">
-                        <div className="text-xs font-black uppercase tracking-[0.22em] text-amber-50/90">{idx + 1}</div>
-                        <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
-                          <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team A</div>
-                          <div className="mt-1">{match.teamA.join(' + ')}</div>
-                        </div>
-                        <div className="text-center text-sm font-black uppercase tracking-[0.3em] text-amber-50">VS</div>
-                        <div className="rounded-2xl border border-white/25 bg-black/20 px-3 py-2 text-sm font-bold text-white sm:text-base">
-                          <div className="text-[10px] uppercase tracking-[0.25em] text-amber-100/80">Team B</div>
-                          <div className="mt-1">{match.teamB.join(' + ')}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  {nextOpenCourt ? (
-                    <div className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-50/90">On {nextOpenCourt.label}</div>
-                  ) : null}
-                </>
-              ) : (
-                <div className="mt-2 text-lg font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-2xl">
-                  NO READY MATCHES YET
-                </div>
-              )}
             </div>
+
+            {nextMatch ? (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* MATCH #1: LEFT SIDE - HIGHLIGHTED/PRIMARY */}
+                <div className="rounded-[2rem] border-2 border-amber-300/60 bg-gradient-to-br from-amber-300/25 to-amber-400/10 p-5 shadow-[0_8px_32px_rgba(251,191,36,0.3)]">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-100">Match #1</div>
+                    <div className="rounded-full bg-amber-300/30 px-3 py-1 text-xs font-bold text-amber-100">
+                      {nextTwoMatches[0]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 1</div>
+                      <div className="mt-2 space-y-1 text-sm font-semibold text-white">
+                        {nextTwoMatches[0]?.teamA.map((player) => (
+                          <div key={player} className="rounded-lg bg-amber-400/10 px-3 py-2">
+                            {player}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="text-center font-black uppercase tracking-[0.35em] text-amber-300/80">VS</div>
+
+                    <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 2</div>
+                      <div className="mt-2 space-y-1 text-sm font-semibold text-white">
+                        {nextTwoMatches[0]?.teamB.map((player) => (
+                          <div key={player} className="rounded-lg bg-amber-400/10 px-3 py-2">
+                            {player}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {nextOpenCourt && (
+                    <div className="mt-4 rounded-xl border border-emerald-300/40 bg-emerald-500/10 px-3 py-2 text-center text-xs font-bold text-emerald-100">
+                      → {nextOpenCourt.label}
+                    </div>
+                  )}
+                </div>
+
+                {/* MATCH #2: RIGHT SIDE - SECONDARY/PREVIEW */}
+                {nextTwoMatches.length > 1 ? (
+                  <div className="rounded-[2rem] border border-white/20 bg-white/5 p-5">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="text-xs font-bold uppercase tracking-[0.3em] text-white/70">Match #2 (Preview)</div>
+                      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200/80">
+                        {nextTwoMatches[1]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 text-sm">
+                      <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+                        <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 1</div>
+                        <div className="mt-1 text-sm text-slate-200/90">{nextTwoMatches[1]?.teamA.join(' + ')}</div>
+                      </div>
+
+                      <div className="text-center text-xs font-bold uppercase tracking-[0.3em] text-white/50">VS</div>
+
+                      <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+                        <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 2</div>
+                        <div className="mt-1 text-sm text-slate-200/90">{nextTwoMatches[1]?.teamB.join(' + ')}</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-[2rem] border border-white/10 bg-white/5 p-5">
+                    <div className="text-center text-sm font-semibold text-white/50">No Match #2 queued yet</div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center text-2xl font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-3xl">
+                NO READY MATCHES YET
+              </div>
+            )}
           </div>
         </section>
 

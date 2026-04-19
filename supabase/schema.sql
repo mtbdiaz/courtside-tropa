@@ -56,7 +56,8 @@ create table if not exists matches (
   score_team2 int default 0,
   winner_team text check (winner_team in ('team1', 'team2', null)),
   status text default 'active' check (status in ('active', 'completed')),
-  is_pair_match boolean default false
+  is_pair_match boolean default false,
+  match_type text default 'mixed' check (match_type in ('custom', 'mixed'))
 );
 
 create table if not exists match_history (

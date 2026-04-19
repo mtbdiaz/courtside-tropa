@@ -60,6 +60,7 @@ interface MatchRow {
   score_team2: number | null;
   winner_team: 'team1' | 'team2' | null;
   status: 'active' | 'completed';
+  match_type: 'custom' | 'mixed';
 }
 
 interface MatchHistoryRow {
@@ -209,7 +210,7 @@ function toMatchPreview(match: MatchRow, playersById: Map<string, Player>, index
     teamB: teamBIds.map((id) => playersById.get(id)?.name ?? 'Unknown'),
     playerIds,
     sourceUnitIds: playerIds,
-    mode: modeFromPlayers(playerIds.map((id) => playersById.get(id)?.gender ?? 'M')),
+    mode: match.match_type,
   };
 }
 
@@ -880,6 +881,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         score_team1: 0,
         score_team2: 0,
         is_pair_match: false,
+        match_type: 'mixed',
       });
 
       const used = new Set([...next.teamA, ...next.teamB]);
@@ -1007,6 +1009,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         score_team1: 0,
         score_team2: 0,
         is_pair_match: mode === 'custom',
+        match_type: 'custom',
       };
 
       const { data: inserted } = await supabase.from('matches').insert(payload).select('id').single();
@@ -1207,17 +1210,22 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
+    // VALIDATION: Check for duplicate players
     const uniqueIds = Array.from(new Set(playerIds));
     if (uniqueIds.length !== 4) {
+      console.error('Custom match validation failed: Duplicate players detected');
       return;
     }
 
     const batch = snapshot.batches[batchId];
+
+    // VALIDATION: Get live court player IDs
     const liveIds = new Set(batch.courts.filter((court) => court.status === 'live').flatMap((court) => court.sourceUnitIds));
 
+    // VALIDATION: Get all queued player IDs (including custom and mixed)
     const { data: queuedRows } = await supabase
       .from('matches')
-      .select('team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time')
+      .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time')
       .eq('batch_id', dbBatchId)
       .eq('status', 'active')
       .is('court_id', null)
@@ -1232,25 +1240,75 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       });
     }
 
+    // VALIDATION: Check each player
     const playerMap = new Map(batch.players.map((player) => [player.id, player]));
-    const valid = uniqueIds.every((id) => {
-      const player = playerMap.get(id);
-      return Boolean(player && player.status === 'checked-in' && !liveIds.has(id) && !queuedIds.has(id));
-    });
+    const validationErrors: string[] = [];
+    
+    for (const playerId of uniqueIds) {
+      const player = playerMap.get(playerId);
+      
+      if (!player) {
+        validationErrors.push(`Player ${playerId} not found`);
+        continue;
+      }
+      
+      if (player.status !== 'checked-in') {
+        validationErrors.push(`Player ${player.name} is not checked in`);
+        continue;
+      }
+      
+      if (liveIds.has(playerId)) {
+        validationErrors.push(`Player ${player.name} is already playing on a court`);
+        continue;
+      }
+      
+      if (queuedIds.has(playerId)) {
+        validationErrors.push(`Player ${player.name} is already in the queue`);
+        continue;
+      }
+    }
 
-    if (!valid) {
+    if (validationErrors.length > 0) {
+      console.error('Custom match validation failed:', validationErrors.join('; '));
       return;
     }
 
-    const firstStart = queuedRows?.[0]?.start_time ? new Date(queuedRows[0].start_time).getTime() : Date.now();
-    const lastStart = queuedRows?.[queuedRows.length - 1]?.start_time
-      ? new Date(queuedRows[queuedRows.length - 1].start_time as string).getTime()
-      : Date.now();
+    // INSERTION LOGIC
+    let queuedAt: string;
 
-    const queuedAt = placement === 'top'
-      ? new Date(firstStart - 1000).toISOString()
-      : new Date(lastStart + 1000).toISOString();
+    if (placement === 'top') {
+      // ADD TO TOP: Insert at position #2 (after Match #1)
+      // Match #1 stays unchanged, new match inserted between #1 and #2
+      
+      const matchRows = (queuedRows ?? []) as Array<{ id: string; team1_player1_id: string | null; team1_player2_id: string | null; team2_player1_id: string | null; team2_player2_id: string | null; start_time: string | null }>;
+      
+      if (matchRows.length === 0) {
+        // Queue is empty, insert at beginning
+        queuedAt = new Date(Date.now()).toISOString();
+      } else if (matchRows.length === 1) {
+        // Only Match #1 exists, insert after it
+        const match1Time = new Date(matchRows[0].start_time as string).getTime();
+        queuedAt = new Date(match1Time + 500).toISOString(); // Insert 500ms after #1
+      } else {
+        // Multiple matches exist, insert between #1 and #2
+        const match1Time = new Date(matchRows[0].start_time as string).getTime();
+        const match2Time = new Date(matchRows[1].start_time as string).getTime();
+        const midTime = Math.floor((match1Time + match2Time) / 2);
+        queuedAt = new Date(midTime).toISOString();
+      }
+    } else {
+      // ADD TO BOTTOM: Append at end of queue
+      const matchRows = (queuedRows ?? []) as Array<{ id: string; team1_player1_id: string | null; team1_player2_id: string | null; team2_player1_id: string | null; team2_player2_id: string | null; start_time: string | null }>;
+      
+      if (matchRows.length === 0) {
+        queuedAt = new Date(Date.now()).toISOString();
+      } else {
+        const lastTime = new Date(matchRows[matchRows.length - 1].start_time as string).getTime();
+        queuedAt = new Date(lastTime + 1000).toISOString();
+      }
+    }
 
+    // INSERT CUSTOM MATCH with match_type = 'custom'
     await supabase.from('matches').insert({
       batch_id: dbBatchId,
       court_id: null,
@@ -1263,6 +1321,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       score_team1: 0,
       score_team2: 0,
       is_pair_match: false,
+      match_type: 'custom',
     });
 
     await loadFromDatabase();
