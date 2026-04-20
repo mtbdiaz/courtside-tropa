@@ -445,7 +445,6 @@ function normalizeSnapshot(input: {
   histories: MatchHistoryRow[];
   activeMode: MatchMode;
 }): BatchSnapshot {
-  const liveMatches = input.matches.filter((row) => isPlayingMatchStatus(row.status) && row.court_id);
   const queuedMatches = input.matches
     .filter((row) => isQueuedMatchStatus(row.status) && !row.court_id)
     .sort((a, b) => {
@@ -457,6 +456,47 @@ function normalizeSnapshot(input: {
 
       return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
     });
+
+  const matchesById = new Map(input.matches.map((row) => [row.id, row]));
+  const playingMatchesByCourtId = new Map<string, MatchRow[]>();
+  for (const match of input.matches) {
+    if (!isPlayingMatchStatus(match.status) || !match.court_id) {
+      continue;
+    }
+
+    const current = playingMatchesByCourtId.get(match.court_id) ?? [];
+    current.push(match);
+    playingMatchesByCourtId.set(match.court_id, current);
+  }
+
+  for (const [courtId, matches] of playingMatchesByCourtId) {
+    matches.sort((a, b) => (b.start_time ?? '').localeCompare(a.start_time ?? '') || b.id.localeCompare(a.id));
+    playingMatchesByCourtId.set(courtId, matches);
+  }
+
+  const liveMatchByCourtId = new Map<string, MatchRow | null>();
+  const visibleLiveMatchIds = new Set<string>();
+  for (const court of input.courts) {
+    const fromCurrentMatchId = court.current_match_id ? matchesById.get(court.current_match_id) : null;
+    const currentIsLive = Boolean(
+      fromCurrentMatchId &&
+      isPlayingMatchStatus(fromCurrentMatchId.status) &&
+      fromCurrentMatchId.court_id === court.id,
+    );
+
+    const resolvedLiveMatch = currentIsLive
+      ? (fromCurrentMatchId as MatchRow)
+      : (playingMatchesByCourtId.get(court.id)?.[0] ?? null);
+
+    liveMatchByCourtId.set(court.id, resolvedLiveMatch);
+    if (resolvedLiveMatch) {
+      visibleLiveMatchIds.add(resolvedLiveMatch.id);
+    }
+  }
+
+  const liveMatches = Array.from(visibleLiveMatchIds)
+    .map((matchId) => matchesById.get(matchId))
+    .filter(Boolean) as MatchRow[];
 
   const livePlayerIds = new Set<string>();
   for (const match of liveMatches) {
@@ -509,12 +549,11 @@ function normalizeSnapshot(input: {
   }
 
   const queueOrder = buildQueueOrder(players, pairs, activePlayerIds);
-  const matchesById = new Map(input.matches.map((row) => [row.id, row]));
 
   const courts = [...input.courts]
     .sort((a, b) => a.court_number - b.court_number)
     .map((court) => {
-      const liveMatch = court.current_match_id ? matchesById.get(court.current_match_id) : null;
+      const liveMatch = liveMatchByCourtId.get(court.id) ?? null;
       const fallbackLive = court.status === 'occupied';
       const ids = liveMatch
         ? [liveMatch.team1_player1_id, liveMatch.team1_player2_id, liveMatch.team2_player1_id, liveMatch.team2_player2_id].filter(Boolean) as string[]
@@ -2075,6 +2114,154 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
+  const deleteAllPlayersForBatch = useCallback(async (batchId: BatchId) => {
+    clearActionError();
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
+      reportActionError('Delete all players failed: missing database connection or batch mapping.');
+      return;
+    }
+
+    const lockAcquired = await acquireQueueLock(2000);
+    if (!lockAcquired) {
+      reportActionError('Delete all players failed: queue is busy, please try again.');
+      return;
+    }
+
+    try {
+      const { error: matchesError } = await supabase
+        .from('matches')
+        .delete()
+        .eq('batch_id', dbBatchId);
+      if (matchesError) {
+        reportActionError(`Delete all players failed while clearing matches: ${matchesError.message}`);
+        return;
+      }
+
+      const { error: courtsError } = await supabase
+        .from('courts')
+        .update({
+          status: 'free',
+          current_match_id: null,
+          start_time: null,
+        })
+        .eq('batch_id', dbBatchId);
+      if (courtsError) {
+        reportActionError(`Delete all players failed while resetting courts: ${courtsError.message}`);
+        return;
+      }
+
+      const { error: playersError } = await supabase
+        .from('players')
+        .delete()
+        .eq('batch_id', dbBatchId);
+      if (playersError) {
+        reportActionError(`Delete all players failed: ${playersError.message}`);
+        return;
+      }
+
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+
+  const setAllPlayersBreakForBatch = useCallback(async (batchId: BatchId) => {
+    clearActionError();
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
+      reportActionError('Set all players to break failed: missing database connection or batch mapping.');
+      return;
+    }
+
+    const lockAcquired = await acquireQueueLock(2000);
+    if (!lockAcquired) {
+      reportActionError('Set all players to break failed: queue is busy, please try again.');
+      return;
+    }
+
+    try {
+      const { error: clearMatchesError } = await supabase
+        .from('matches')
+        .delete()
+        .eq('batch_id', dbBatchId)
+        .in('status', ['queued', 'playing', 'active']);
+      if (clearMatchesError) {
+        reportActionError(`Set all players to break failed while clearing active queue: ${clearMatchesError.message}`);
+        return;
+      }
+
+      const { error: courtsError } = await supabase
+        .from('courts')
+        .update({
+          status: 'free',
+          current_match_id: null,
+          start_time: null,
+        })
+        .eq('batch_id', dbBatchId);
+      if (courtsError) {
+        reportActionError(`Set all players to break failed while resetting courts: ${courtsError.message}`);
+        return;
+      }
+
+      const { error: playersError } = await supabase
+        .from('players')
+        .update({ status: 'break' })
+        .eq('batch_id', dbBatchId);
+      if (playersError) {
+        reportActionError(`Set all players to break failed: ${playersError.message}`);
+        return;
+      }
+
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+
+  const deleteAllMatchHistoryForBatch = useCallback(async (batchId: BatchId) => {
+    clearActionError();
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
+      reportActionError('Delete match history failed: missing database connection or batch mapping.');
+      return;
+    }
+
+    const lockAcquired = await acquireQueueLock(2000);
+    if (!lockAcquired) {
+      reportActionError('Delete match history failed: queue is busy, please try again.');
+      return;
+    }
+
+    try {
+      const { error: historyError } = await supabase
+        .from('match_history')
+        .delete()
+        .eq('batch_id', dbBatchId);
+      if (historyError) {
+        reportActionError(`Delete match history failed: ${historyError.message}`);
+        return;
+      }
+
+      const { error: completedMatchesError } = await supabase
+        .from('matches')
+        .delete()
+        .eq('batch_id', dbBatchId)
+        .eq('status', 'completed');
+      if (completedMatchesError) {
+        reportActionError(`Delete match history failed while clearing completed matches: ${completedMatchesError.message}`);
+        return;
+      }
+
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+
   const signOut = useCallback(async () => {
     const supabase = supabaseRef.current;
     if (!supabase) {
@@ -2141,6 +2328,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     cancelMatch,
     editScore,
     fillIdleCourts,
+    deleteAllPlayersForBatch,
+    setAllPlayersBreakForBatch,
+    deleteAllMatchHistoryForBatch,
     signOut,
   };
 }

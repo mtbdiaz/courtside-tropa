@@ -23,6 +23,22 @@ function formatTimer(startedAt: string | null, nowMs: number) {
 
 type BoardMode = 'admin' | 'public' | 'score';
 
+const BATCH_UI_SETTINGS_STORAGE_KEY = 'courtside:batch-ui-settings:v1';
+const DEFAULT_QUEUE_PAUSED_BY_BATCH: Record<BatchId, boolean> = { 1: false, 2: false };
+const DEFAULT_AUTOFILL_ENABLED_BY_BATCH: Record<BatchId, boolean> = { 1: true, 2: true };
+
+function normalizeBooleanRecord(value: unknown, fallback: Record<BatchId, boolean>): Record<BatchId, boolean> {
+  if (!value || typeof value !== 'object') {
+    return fallback;
+  }
+
+  const candidate = value as Partial<Record<string, unknown>>;
+  return {
+    1: typeof candidate['1'] === 'boolean' ? candidate['1'] : fallback[1],
+    2: typeof candidate['2'] === 'boolean' ? candidate['2'] : fallback[2],
+  };
+}
+
 export default function CourtsideBoard({
   initialBatchId = 1,
   mode = 'admin',
@@ -59,6 +75,9 @@ export default function CourtsideBoard({
     completeMatch,
     cancelMatch,
     fillIdleCourts,
+    deleteAllPlayersForBatch,
+    setAllPlayersBreakForBatch,
+    deleteAllMatchHistoryForBatch,
     signOut,
   } = useCourtsideBoard(initialBatchId);
 
@@ -72,13 +91,63 @@ export default function CourtsideBoard({
   const [scoreDrafts, setScoreDrafts] = useState<Record<string, { a: string; b: string }>>({});
   const [pairSelection, setPairSelection] = useState<string[]>([]);
   const [pairSearch, setPairSearch] = useState('');
+
+function readPersistedBatchUiSettings() {
+  if (typeof window === 'undefined') {
+    return {
+      queuePausedByBatch: DEFAULT_QUEUE_PAUSED_BY_BATCH,
+      autoFillEnabledByBatch: DEFAULT_AUTOFILL_ENABLED_BY_BATCH,
+    };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(BATCH_UI_SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return {
+        queuePausedByBatch: DEFAULT_QUEUE_PAUSED_BY_BATCH,
+        autoFillEnabledByBatch: DEFAULT_AUTOFILL_ENABLED_BY_BATCH,
+      };
+    }
+
+    const parsed = JSON.parse(raw) as {
+      queuePausedByBatch?: unknown;
+      autoFillEnabledByBatch?: unknown;
+    };
+
+    return {
+      queuePausedByBatch: normalizeBooleanRecord(parsed.queuePausedByBatch, DEFAULT_QUEUE_PAUSED_BY_BATCH),
+      autoFillEnabledByBatch: normalizeBooleanRecord(parsed.autoFillEnabledByBatch, DEFAULT_AUTOFILL_ENABLED_BY_BATCH),
+    };
+  } catch {
+    return {
+      queuePausedByBatch: DEFAULT_QUEUE_PAUSED_BY_BATCH,
+      autoFillEnabledByBatch: DEFAULT_AUTOFILL_ENABLED_BY_BATCH,
+    };
+  }
+}
   const [playerSearch, setPlayerSearch] = useState('');
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
-  const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
-  const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>({ 1: true, 2: true });
+  const [initialBatchUiSettings] = useState(() => readPersistedBatchUiSettings());
+  const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>(initialBatchUiSettings.queuePausedByBatch);
+  const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>(initialBatchUiSettings.autoFillEnabledByBatch);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const autoFillRunningRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        BATCH_UI_SETTINGS_STORAGE_KEY,
+        JSON.stringify({
+          queuePausedByBatch,
+          autoFillEnabledByBatch,
+        }),
+      );
+    } catch {
+      // Ignore localStorage write failures (private mode, quota, etc).
+    }
+  }, [autoFillEnabledByBatch, queuePausedByBatch]);
 
   useEffect(() => {
     if (!lastActionError) {
@@ -390,6 +459,39 @@ export default function CourtsideBoard({
     await signOut();
     router.replace('/');
     router.refresh();
+  };
+
+  const handleDeleteAllPlayers = async () => {
+    const shouldDelete = window.confirm(
+      `Delete ALL players in Batch ${activeBatch.batchId}? This also clears current queue and live matches for this batch.`,
+    );
+    if (!shouldDelete) {
+      return;
+    }
+
+    await deleteAllPlayersForBatch(activeBatch.batchId);
+  };
+
+  const handleSetAllPlayersBreak = async () => {
+    const shouldSetBreak = window.confirm(
+      `Set ALL players in Batch ${activeBatch.batchId} to Break? This also clears queued/live matches for this batch.`,
+    );
+    if (!shouldSetBreak) {
+      return;
+    }
+
+    await setAllPlayersBreakForBatch(activeBatch.batchId);
+  };
+
+  const handleDeleteAllMatchHistory = async () => {
+    const shouldDelete = window.confirm(
+      `Delete ALL match history in Batch ${activeBatch.batchId}? Completed match records for this batch will be removed.`,
+    );
+    if (!shouldDelete) {
+      return;
+    }
+
+    await deleteAllMatchHistoryForBatch(activeBatch.batchId);
   };
 
   if (!isReady) {
@@ -1402,6 +1504,49 @@ export default function CourtsideBoard({
                 Add to Bottom
               </button>
             </div>
+          </article>
+
+          <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-semibold text-white">Settings</h3>
+                <div className="mt-1 text-xs text-slate-300/80">High impact actions are grouped here to prevent accidental clicks.</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen((current) => !current)}
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
+              >
+                {settingsOpen ? 'Hide' : 'Open'}
+              </button>
+            </div>
+
+            {settingsOpen ? (
+              <div className="mt-4 space-y-3 rounded-2xl border border-rose-300/25 bg-rose-500/10 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-100">Batch {activeBatch.batchId} only</div>
+                <button
+                  type="button"
+                  onClick={handleDeleteAllPlayers}
+                  className="w-full rounded-2xl border border-rose-300/30 bg-rose-500/15 px-4 py-3 text-left text-sm font-semibold text-rose-100"
+                >
+                  Delete all players
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSetAllPlayersBreak}
+                  className="w-full rounded-2xl border border-amber-300/35 bg-amber-500/15 px-4 py-3 text-left text-sm font-semibold text-amber-100"
+                >
+                  Set all players to Break
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteAllMatchHistory}
+                  className="w-full rounded-2xl border border-rose-300/30 bg-rose-500/15 px-4 py-3 text-left text-sm font-semibold text-rose-100"
+                >
+                  Delete all match history
+                </button>
+              </div>
+            ) : null}
           </article>
 
         </div>
