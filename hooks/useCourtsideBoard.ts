@@ -1377,8 +1377,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const refreshQueueProcess = useCallback(async (batchId: BatchId) => {
-    await ensureReadyMatches(batchId, 6);
-  }, [ensureReadyMatches]);
+    const queuedCount = snapshot.batches[batchId].queuedMatches.length;
+    const target = Math.max(1, queuedCount + 1);
+    await ensureReadyMatches(batchId, target);
+  }, [ensureReadyMatches, snapshot.batches]);
 
   const cancelMatch = useCallback(async (batchId: BatchId, courtId: string) => {
     const supabase = supabaseRef.current;

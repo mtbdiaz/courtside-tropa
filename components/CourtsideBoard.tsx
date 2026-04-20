@@ -989,7 +989,7 @@ export default function CourtsideBoard({
                   onClick={() => refreshQueueProcess(activeBatch.batchId)}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
-                  Refresh queue
+                  Generate 1 Queue
                 </button>
                 <button
                   type="button"
