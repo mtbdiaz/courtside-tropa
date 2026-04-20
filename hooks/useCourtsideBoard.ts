@@ -134,6 +134,32 @@ function hasAnyPlayerConflict(playerIds: string[], reserved: Set<string>) {
   return playerIds.some((id) => reserved.has(id));
 }
 
+async function updateQueuePositions(
+  supabase: ReturnType<typeof createSupabaseBrowserClient>,
+  dbBatchId: string,
+  rows: Array<{ id: string; queue_position?: number | null }>,
+): Promise<{ error: string | null }> {
+  for (let i = 0; i < rows.length; i += 1) {
+    const nextPosition = i + 1;
+    if ((rows[i].queue_position ?? null) === nextPosition) {
+      continue;
+    }
+
+    const { error } = await supabase
+      .from('matches')
+      .update({ queue_position: nextPosition })
+      .eq('id', rows[i].id)
+      .eq('batch_id', dbBatchId)
+      .is('court_id', null);
+
+    if (error) {
+      return { error: error.message };
+    }
+  }
+
+  return { error: null };
+}
+
 function getBatchIdFromName(name: string): BatchId | null {
   const matched = name.match(BATCH_NAME_REGEX);
   if (!matched) {
@@ -1188,6 +1214,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     const readyRows: Array<{
       id: string;
+      queue_position?: number | null;
       team1_player1_id: string | null;
       team1_player2_id: string | null;
       team2_player1_id: string | null;
@@ -1207,17 +1234,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       readyRows.push(row);
     }
 
-    for (let i = 0; i < readyRows.length; i += 1) {
-      const { error: resequenceError } = await supabase
-        .from('matches')
-        .update({ queue_position: i + 1 })
-        .eq('id', readyRows[i].id)
-        .eq('batch_id', dbBatchId)
-        .is('court_id', null);
-      if (resequenceError) {
-        reportActionError(`Queue resequencing failed: ${resequenceError.message}`);
-        return;
-      }
+    const ensureResequence = await updateQueuePositions(supabase, dbBatchId, readyRows);
+    if (ensureResequence.error) {
+      reportActionError(`Queue resequencing failed: ${ensureResequence.error}`);
+      return;
     }
 
     if (readyRows.length >= targetReadyMatches) {
@@ -1330,16 +1350,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     const [moved] = queue.splice(index, 1);
     queue.splice(targetIndex, 0, moved);
 
-    for (let i = 0; i < queue.length; i += 1) {
-      const { error: updateError } = await supabase
-        .from('matches')
-        .update({ queue_position: i + 1 })
-        .eq('id', queue[i].id)
-        .eq('batch_id', dbBatchId);
-      if (updateError) {
-        reportActionError(`Queue reorder failed: ${updateError.message}`);
-        return;
-      }
+    const moveResequence = await updateQueuePositions(supabase, dbBatchId, queue);
+    if (moveResequence.error) {
+      reportActionError(`Queue reorder failed: ${moveResequence.error}`);
+      return;
     }
 
       await loadFromDatabase();
@@ -1759,40 +1773,16 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         return;
       }
 
-    for (let i = 0; i < orderedQueue.length; i += 1) {
-      const { error: resequenceError } = await supabase
-        .from('matches')
-        .update({ queue_position: i + 1 })
-        .eq('id', orderedQueue[i].id)
-        .eq('batch_id', dbBatchId)
-        .is('court_id', null);
-      if (resequenceError) {
-        reportActionError(`Custom match failed while resequencing queue: ${resequenceError.message}`);
-        return;
-      }
-    }
-
+    const resequencedQueue = orderedQueue.map((row, i) => ({ ...row, queue_position: i + 1 }));
     const insertPosition = placement === 'top'
       ? (orderedQueue.length === 0 ? 1 : 2)
       : orderedQueue.length + 1;
 
-    for (let i = orderedQueue.length - 1; i >= 0; i -= 1) {
-      const currentPosition = i + 1;
-      if (currentPosition < insertPosition) {
-        continue;
-      }
-
-      const { error: shiftError } = await supabase
-        .from('matches')
-        .update({ queue_position: currentPosition + 1 })
-        .eq('id', orderedQueue[i].id)
-        .eq('batch_id', dbBatchId)
-        .is('court_id', null);
-      if (shiftError) {
-        reportActionError(`Custom match failed while shifting queue: ${shiftError.message}`);
-        return;
-      }
-    }
+    const finalQueue: Array<{ id: string; queue_position?: number | null }> = resequencedQueue.map((row) => ({
+      id: row.id,
+      queue_position: row.queue_position,
+    }));
+    finalQueue.splice(insertPosition - 1, 0, { id: '__custom__', queue_position: insertPosition });
 
     // INSERT CUSTOM MATCH
     const payload: {
@@ -1826,9 +1816,26 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       payload.match_type = 'custom';
     }
 
-    const { error: insertError } = await supabase.from('matches').insert(payload);
+    const { data: inserted, error: insertError } = await supabase.from('matches').insert(payload).select('id,queue_position').single();
     if (insertError) {
       reportActionError(`Custom match insert failed: ${insertError.message}`);
+      return;
+    }
+
+    if (!inserted?.id) {
+      reportActionError('Custom match insert failed: missing inserted match id.');
+      return;
+    }
+
+    const finalResequenceRows = finalQueue
+      .map((row, i) => ({
+        id: row.id === '__custom__' ? inserted.id : row.id,
+        queue_position: row.id === '__custom__' ? (inserted.queue_position ?? insertPosition) : row.queue_position ?? i + 1,
+      }));
+
+    const customResequence = await updateQueuePositions(supabase, dbBatchId, finalResequenceRows);
+    if (customResequence.error) {
+      reportActionError(`Custom queue finalize failed: ${customResequence.error}`);
       return;
     }
 
