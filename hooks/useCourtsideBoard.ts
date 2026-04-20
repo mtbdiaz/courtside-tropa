@@ -41,6 +41,7 @@ interface CourtRow {
   id: string;
   batch_id: string;
   court_number: number;
+  is_active?: boolean;
   status: 'free' | 'occupied';
   current_match_id: string | null;
   start_time: string | null;
@@ -60,6 +61,8 @@ interface MatchRow {
   score_team2: number | null;
   winner_team: 'team1' | 'team2' | null;
   status: 'queued' | 'playing' | 'active' | 'completed';
+  queue_position?: number | null;
+  created_at?: string | null;
   match_type?: 'custom' | 'mixed';
 }
 
@@ -116,6 +119,19 @@ function isPlayingMatchStatus(status: MatchRow['status']) {
 
 function historyMatchId(row: MatchHistoryRow) {
   return row.original_match_id ?? row.match_id ?? null;
+}
+
+function matchPlayerIds(row: {
+  team1_player1_id: string | null;
+  team1_player2_id: string | null;
+  team2_player1_id: string | null;
+  team2_player2_id: string | null;
+}) {
+  return [row.team1_player1_id, row.team1_player2_id, row.team2_player1_id, row.team2_player2_id].filter(Boolean) as string[];
+}
+
+function hasAnyPlayerConflict(playerIds: string[], reserved: Set<string>) {
+  return playerIds.some((id) => reserved.has(id));
 }
 
 function getBatchIdFromName(name: string): BatchId | null {
@@ -363,7 +379,15 @@ function normalizeSnapshot(input: {
   const liveMatches = input.matches.filter((row) => isPlayingMatchStatus(row.status) && row.court_id);
   const queuedMatches = input.matches
     .filter((row) => isQueuedMatchStatus(row.status) && !row.court_id)
-    .sort((a, b) => (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id));
+    .sort((a, b) => {
+      const aPos = a.queue_position ?? Number.MAX_SAFE_INTEGER;
+      const bPos = b.queue_position ?? Number.MAX_SAFE_INTEGER;
+      if (aPos !== bPos) {
+        return aPos - bPos;
+      }
+
+      return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
+    });
   const activePlayerIds = new Set<string>();
   for (const match of liveMatches) {
     [match.team1_player1_id, match.team1_player2_id, match.team2_player1_id, match.team2_player2_id].forEach((id) => {
@@ -399,6 +423,7 @@ function normalizeSnapshot(input: {
       return {
         id: court.id,
         label: `Court ${court.court_number}`,
+        isActive: court.is_active !== false,
         status: liveMatch || fallbackLive ? ('live' as const) : ('idle' as const),
         matchId: liveMatch?.id ?? court.current_match_id,
         mode: liveMatch
@@ -522,7 +547,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       supabase.auth.getSession(),
       supabase.from('batches').select('id,name,num_courts,created_at').order('created_at', { ascending: true }),
       supabase.from('players').select('id,batch_id,name,gender,status,pair_id,created_at').order('created_at', { ascending: true }),
-      supabase.from('courts').select('id,batch_id,court_number,status,current_match_id,start_time').order('court_number', { ascending: true }),
+      supabase.from('courts').select('id,batch_id,court_number,is_active,status,current_match_id,start_time').order('court_number', { ascending: true }),
     ]);
 
     let historyData: MatchHistoryRow[] | null = null;
@@ -570,21 +595,21 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     if (supportsMatchTypeRef.current) {
       const withType = await supabase
         .from('matches')
-        .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status,match_type');
+        .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status,queue_position,created_at,match_type');
       matchesData = (withType.data as MatchRow[] | null) ?? null;
       matchesError = withType.error as { code?: string } | null;
       if (matchesError?.code === '42703') {
         supportsMatchTypeRef.current = false;
         const fallback = await supabase
           .from('matches')
-          .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status');
+          .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status,queue_position,created_at');
         matchesData = (fallback.data as MatchRow[] | null) ?? null;
         matchesError = fallback.error as { code?: string } | null;
       }
     } else {
       const fallback = await supabase
         .from('matches')
-        .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status');
+        .select('id,batch_id,court_id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,end_time,score_team1,score_team2,winner_team,status,queue_position,created_at');
       matchesData = (fallback.data as MatchRow[] | null) ?? null;
       matchesError = fallback.error as { code?: string } | null;
     }
@@ -630,14 +655,14 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
             name: 'Batch 1',
             start_time: '8:00 AM - 12:00 NN',
             end_time: '8:00 AM - 12:00 NN',
-            num_courts: 5,
+            num_courts: 8,
           },
           {
             event_id: eventId,
             name: 'Batch 2',
             start_time: '1:00 PM - 5:00 PM',
             end_time: '1:00 PM - 5:00 PM',
-            num_courts: 5,
+            num_courts: 8,
           },
         ]);
       }
@@ -679,6 +704,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     const courtsToBootstrap: Array<{
       batch_id: string;
       court_number: number;
+      is_active: true;
       status: 'free';
       current_match_id: null;
       start_time: null;
@@ -698,6 +724,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
           ...Array.from({ length: row.num_courts ?? 0 }, (_, index) => ({
             batch_id: row.id,
             court_number: index + 1,
+            is_active: true as const,
             status: 'free' as const,
             current_match_id: null,
             start_time: null,
@@ -715,6 +742,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
               id: `synthetic-${row.id}-${index + 1}`,
               batch_id: row.id,
               court_number: index + 1,
+              is_active: true as const,
               status: 'free' as const,
               current_match_id: null,
               start_time: null,
@@ -798,7 +826,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     const { data: existingCourts } = await supabase
       .from('courts')
-      .select('id,court_number,status')
+      .select('id,court_number,is_active,status')
       .eq('batch_id', dbBatchId)
       .order('court_number', { ascending: true });
 
@@ -809,6 +837,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         inserts.push({
           batch_id: dbBatchId,
           court_number: number,
+          is_active: true as const,
           status: 'free' as const,
         });
       }
@@ -827,6 +856,31 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     await loadFromDatabase();
   }, [loadFromDatabase, withBatchDbId]);
+
+  const setCourtActive = useCallback(async (batchId: BatchId, courtId: string, isActive: boolean) => {
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
+      return;
+    }
+
+    const court = snapshot.batches[batchId].courts.find((entry) => entry.id === courtId);
+    if (!court) {
+      return;
+    }
+
+    if (!isActive && court.status === 'live') {
+      return;
+    }
+
+    await supabase
+      .from('courts')
+      .update({ is_active: isActive })
+      .eq('id', courtId)
+      .eq('batch_id', dbBatchId);
+
+    await loadFromDatabase();
+  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
 
   const addSinglePlayer = useCallback(async (batchId: BatchId, name: string, gender: Gender) => {
     const supabase = supabaseRef.current;
@@ -1053,30 +1107,59 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     const batch = snapshot.batches[batchId];
     const { data: queuedRows } = await supabase
       .from('matches')
-      .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time')
+      .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,queue_position')
       .eq('batch_id', dbBatchId)
       .in('status', ['queued', 'active'])
       .is('court_id', null)
+      .order('queue_position', { ascending: true, nullsFirst: false })
       .order('start_time', { ascending: true });
 
-    const readyRows = queuedRows ?? [];
-    if (readyRows.length >= targetReadyMatches) {
-      return;
-    }
+    const sortedRows = (queuedRows ?? []).slice().sort((a, b) => {
+      const aPos = a.queue_position ?? Number.MAX_SAFE_INTEGER;
+      const bPos = b.queue_position ?? Number.MAX_SAFE_INTEGER;
+      if (aPos !== bPos) {
+        return aPos - bPos;
+      }
+      return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
+    });
 
     const reserved = new Set<string>();
-    for (const row of readyRows) {
-      [row.team1_player1_id, row.team1_player2_id, row.team2_player1_id, row.team2_player2_id].forEach((id) => {
-        if (id) {
-          reserved.add(id);
-        }
-      });
-    }
-
     for (const court of batch.courts) {
       if (court.status === 'live') {
         court.sourceUnitIds.forEach((id) => reserved.add(id));
       }
+    }
+
+    const readyRows: Array<{
+      id: string;
+      team1_player1_id: string | null;
+      team1_player2_id: string | null;
+      team2_player1_id: string | null;
+      team2_player2_id: string | null;
+    }> = [];
+    for (const row of sortedRows) {
+      const ids = matchPlayerIds(row);
+      if (ids.length !== 4 || hasAnyPlayerConflict(ids, reserved)) {
+        await supabase.from('matches').delete().eq('id', row.id).eq('batch_id', dbBatchId).is('court_id', null);
+        continue;
+      }
+
+      ids.forEach((id) => reserved.add(id));
+      readyRows.push(row);
+    }
+
+    for (let i = 0; i < readyRows.length; i += 1) {
+      await supabase
+        .from('matches')
+        .update({ queue_position: i + 1 })
+        .eq('id', readyRows[i].id)
+        .eq('batch_id', dbBatchId)
+        .is('court_id', null);
+    }
+
+    if (readyRows.length >= targetReadyMatches) {
+      await loadFromDatabase();
+      return;
     }
 
     const stats = getPlayerStats(batch);
@@ -1097,6 +1180,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         team1_player2_id: string;
         team2_player1_id: string;
         team2_player2_id: string;
+        queue_position: number;
         start_time: string;
         status: 'queued';
         score_team1: number;
@@ -1109,6 +1193,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         team1_player2_id: next.teamA[1],
         team2_player1_id: next.teamB[0],
         team2_player2_id: next.teamB[1],
+        queue_position: readyRows.length + index + 1,
         start_time: new Date(base + index * 1000).toISOString(),
         status: 'queued',
         score_team1: 0,
@@ -1141,13 +1226,22 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     const { data: queuedRows } = await supabase
       .from('matches')
-      .select('id,start_time')
+      .select('id,queue_position,start_time')
       .eq('batch_id', dbBatchId)
       .in('status', ['queued', 'active'])
       .is('court_id', null)
+      .order('queue_position', { ascending: true, nullsFirst: false })
       .order('start_time', { ascending: true });
 
-    const queue = (queuedRows ?? []).slice();
+    const queue = (queuedRows ?? []).slice().sort((a, b) => {
+      const aPos = a.queue_position ?? Number.MAX_SAFE_INTEGER;
+      const bPos = b.queue_position ?? Number.MAX_SAFE_INTEGER;
+      if (aPos !== bPos) {
+        return aPos - bPos;
+      }
+
+      return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
+    });
     const index = queue.findIndex((row) => row.id === matchId);
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (index < 0 || targetIndex < 0 || targetIndex >= queue.length) {
@@ -1157,11 +1251,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     const [moved] = queue.splice(index, 1);
     queue.splice(targetIndex, 0, moved);
 
-    const base = Date.now() - queue.length * 1000;
     for (let i = 0; i < queue.length; i += 1) {
       await supabase
         .from('matches')
-        .update({ start_time: new Date(base + i * 1000).toISOString() })
+        .update({ queue_position: i + 1 })
         .eq('id', queue[i].id)
         .eq('batch_id', dbBatchId);
     }
@@ -1235,6 +1328,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
+    const targetCourt = snapshot.batches[batchId].courts.find((court) => court.id === courtId);
+    if (!targetCourt?.isActive) {
+      return;
+    }
+
     if (selectedPlayers && selectedPlayers.playerIds.length === 4) {
       const payload: {
         batch_id: string;
@@ -1286,6 +1384,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .eq('batch_id', dbBatchId)
       .in('status', ['queued', 'active'])
       .is('court_id', null)
+      .order('queue_position', { ascending: true, nullsFirst: false })
       .order('start_time', { ascending: true })
       .limit(1);
 
@@ -1298,6 +1397,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .from('matches')
       .update({
         court_id: courtId,
+        queue_position: null,
         status: 'playing',
         start_time: nowIso(),
       })
@@ -1312,7 +1412,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }).eq('id', courtId);
 
     await loadFromDatabase();
-  }, [loadFromDatabase, withBatchDbId]);
+  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
 
   const completeMatch = useCallback(async (batchId: BatchId, courtId: string, scoreA: number, scoreB: number) => {
     const supabase = supabaseRef.current;
@@ -1483,14 +1583,24 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     // VALIDATION: Get all queued player IDs (including custom and mixed)
     const { data: queuedRows } = await supabase
       .from('matches')
-      .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time')
+      .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,queue_position')
       .eq('batch_id', dbBatchId)
       .in('status', ['queued', 'active'])
       .is('court_id', null)
+      .order('queue_position', { ascending: true, nullsFirst: false })
       .order('start_time', { ascending: true });
 
+    const orderedQueue = (queuedRows ?? []).slice().sort((a, b) => {
+      const aPos = a.queue_position ?? Number.MAX_SAFE_INTEGER;
+      const bPos = b.queue_position ?? Number.MAX_SAFE_INTEGER;
+      if (aPos !== bPos) {
+        return aPos - bPos;
+      }
+      return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
+    });
+
     const queuedIds = new Set<string>();
-    for (const row of queuedRows ?? []) {
+    for (const row of orderedQueue) {
       [row.team1_player1_id, row.team1_player2_id, row.team2_player1_id, row.team2_player2_id].forEach((id) => {
         if (id) {
           queuedIds.add(id);
@@ -1531,39 +1641,31 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    // INSERTION LOGIC
-    let queuedAt: string;
+    for (let i = 0; i < orderedQueue.length; i += 1) {
+      await supabase
+        .from('matches')
+        .update({ queue_position: i + 1 })
+        .eq('id', orderedQueue[i].id)
+        .eq('batch_id', dbBatchId)
+        .is('court_id', null);
+    }
 
-    if (placement === 'top') {
-      // ADD TO TOP: Insert at position #2 (after Match #1)
-      // Match #1 stays unchanged, new match inserted between #1 and #2
-      
-      const matchRows = (queuedRows ?? []) as Array<{ id: string; team1_player1_id: string | null; team1_player2_id: string | null; team2_player1_id: string | null; team2_player2_id: string | null; start_time: string | null }>;
-      
-      if (matchRows.length === 0) {
-        // Queue is empty, insert at beginning
-        queuedAt = new Date(Date.now()).toISOString();
-      } else if (matchRows.length === 1) {
-        // Only Match #1 exists, insert after it
-        const match1Time = new Date(matchRows[0].start_time as string).getTime();
-        queuedAt = new Date(match1Time + 500).toISOString(); // Insert 500ms after #1
-      } else {
-        // Multiple matches exist, insert between #1 and #2
-        const match1Time = new Date(matchRows[0].start_time as string).getTime();
-        const match2Time = new Date(matchRows[1].start_time as string).getTime();
-        const midTime = Math.floor((match1Time + match2Time) / 2);
-        queuedAt = new Date(midTime).toISOString();
+    const insertPosition = placement === 'top'
+      ? (orderedQueue.length === 0 ? 1 : 2)
+      : orderedQueue.length + 1;
+
+    for (let i = orderedQueue.length - 1; i >= 0; i -= 1) {
+      const currentPosition = i + 1;
+      if (currentPosition < insertPosition) {
+        continue;
       }
-    } else {
-      // ADD TO BOTTOM: Append at end of queue
-      const matchRows = (queuedRows ?? []) as Array<{ id: string; team1_player1_id: string | null; team1_player2_id: string | null; team2_player1_id: string | null; team2_player2_id: string | null; start_time: string | null }>;
-      
-      if (matchRows.length === 0) {
-        queuedAt = new Date(Date.now()).toISOString();
-      } else {
-        const lastTime = new Date(matchRows[matchRows.length - 1].start_time as string).getTime();
-        queuedAt = new Date(lastTime + 1000).toISOString();
-      }
+
+      await supabase
+        .from('matches')
+        .update({ queue_position: currentPosition + 1 })
+        .eq('id', orderedQueue[i].id)
+        .eq('batch_id', dbBatchId)
+        .is('court_id', null);
     }
 
     // INSERT CUSTOM MATCH
@@ -1574,6 +1676,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       team1_player2_id: string;
       team2_player1_id: string;
       team2_player2_id: string;
+      queue_position: number;
       start_time: string;
       status: 'queued';
       score_team1: number;
@@ -1586,7 +1689,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       team1_player2_id: uniqueIds[1],
       team2_player1_id: uniqueIds[2],
       team2_player2_id: uniqueIds[3],
-      start_time: queuedAt,
+      queue_position: insertPosition,
+      start_time: nowIso(),
       status: 'queued',
       score_team1: 0,
       score_team2: 0,
@@ -1608,7 +1712,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const idleCourts = snapshot.batches[batchId].courts.filter((court) => court.status === 'idle');
+    const idleCourts = snapshot.batches[batchId].courts.filter((court) => court.status === 'idle' && court.isActive);
     if (idleCourts.length === 0) {
       return;
     }
@@ -1619,6 +1723,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .eq('batch_id', dbBatchId)
       .in('status', ['queued', 'active'])
       .is('court_id', null)
+      .order('queue_position', { ascending: true, nullsFirst: false })
       .order('start_time', { ascending: true });
 
     const ready = queuedRows ?? [];
@@ -1633,6 +1738,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         .from('matches')
         .update({
           court_id: court.id,
+          queue_position: null,
           status: 'playing',
           start_time: startedAt,
         })
@@ -1661,11 +1767,17 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
+    const targetCourt = snapshot.batches[batchId].courts.find((court) => court.id === courtId);
+    if (!targetCourt?.isActive) {
+      return;
+    }
+
     const startedAt = nowIso();
     await supabase
       .from('matches')
       .update({
         court_id: courtId,
+        queue_position: null,
         status: 'playing',
         start_time: startedAt,
       })
@@ -1684,7 +1796,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .eq('batch_id', dbBatchId);
 
     await loadFromDatabase();
-  }, [loadFromDatabase, withBatchDbId]);
+  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
 
   const signOut = useCallback(async () => {
     const supabase = supabaseRef.current;
@@ -1730,6 +1842,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     setActiveBatchId,
     setMode,
     setCourtCount,
+    setCourtActive,
     addSinglePlayer,
     addBulk,
     updatePlayer,

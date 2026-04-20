@@ -40,6 +40,7 @@ export default function CourtsideBoard({
     authEmail,
     setActiveBatchId,
     setCourtCount,
+    setCourtActive,
     addSinglePlayer,
     addBulk,
     updatePlayer,
@@ -101,11 +102,18 @@ export default function CourtsideBoard({
   }, [activeBatch.courts]);
 
   const availableForCustom = useMemo(
-    () =>
-      activeBatch.players
-        .filter((player) => player.status === 'checked-in')
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [activeBatch.players],
+    () => {
+      const queuedPlayerIds = new Set(activeBatch.queuedMatches.flatMap((match) => match.playerIds));
+      return activeBatch.players
+        .filter(
+          (player) =>
+            player.status === 'checked-in' &&
+            !activePlayers.has(player.id) &&
+            !queuedPlayerIds.has(player.id),
+        )
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
+    [activeBatch.players, activeBatch.queuedMatches, activePlayers],
   );
 
   const sortedPlayers = useMemo(
@@ -148,7 +156,12 @@ export default function CourtsideBoard({
   );
 
   const idleCourts = useMemo(
-    () => activeBatch.courts.filter((court) => court.status === 'idle'),
+    () => activeBatch.courts.filter((court) => court.status === 'idle' && court.isActive),
+    [activeBatch.courts],
+  );
+
+  const inactiveCourtCount = useMemo(
+    () => activeBatch.courts.filter((court) => !court.isActive).length,
     [activeBatch.courts],
   );
 
@@ -988,6 +1001,7 @@ export default function CourtsideBoard({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Courts</h3>
+                <div className="mt-1 text-xs text-slate-300/80">{activeBatch.courts.length - inactiveCourtCount} active / {inactiveCourtCount} inactive</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1013,15 +1027,31 @@ export default function CourtsideBoard({
               {activeBatch.courts.map((court) => {
                 const draft = scoreDrafts[court.id] ?? { a: '', b: '' };
                 return (
-                  <div key={court.id} className={`rounded-2xl border p-4 ${court.status === 'live' ? 'border-orange-300/30 bg-orange-400/8' : 'border-white/10 bg-white/5'}`}>
+                  <div key={court.id} className={`rounded-2xl border p-4 ${!court.isActive ? 'border-slate-300/20 bg-slate-700/20' : court.status === 'live' ? 'border-orange-300/30 bg-orange-400/8' : 'border-white/10 bg-white/5'}`}>
                     <div className="flex items-center justify-between gap-3">
                       <div className="font-semibold text-white">{court.label}</div>
-                      <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
-                        {formatTimer(court.startedAt, nowMs)}
+                      <div className="flex items-center gap-2">
+                        <div className={`rounded-full border px-3 py-1 text-xs ${court.isActive ? 'border-emerald-300/30 bg-emerald-500/10 text-emerald-100' : 'border-slate-300/20 bg-slate-900/30 text-slate-200/90'}`}>
+                          {court.isActive ? 'Active' : 'Inactive'}
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
+                          {formatTimer(court.startedAt, nowMs)}
+                        </div>
                       </div>
                     </div>
 
-                    {court.status === 'live' ? (
+                    {!court.isActive ? (
+                      <div className="mt-3">
+                        <div className="text-sm text-slate-300/80">This court is inactive and will not receive players.</div>
+                        <button
+                          type="button"
+                          onClick={() => setCourtActive(activeBatch.batchId, court.id, true)}
+                          className="mt-3 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-100"
+                        >
+                          Activate court
+                        </button>
+                      </div>
+                    ) : court.status === 'live' ? (
                       <>
                         <div className="mt-3 text-sm text-slate-200/90">Team A: {court.teamA.join(', ')}</div>
                         <div className="mt-1 text-sm text-slate-200/90">Team B: {court.teamB.join(', ')}</div>
@@ -1080,13 +1110,22 @@ export default function CourtsideBoard({
                       </>
                     ) : (
                       <div className="mt-3">
-                        <button
-                          type="button"
-                          onClick={() => startMatchOnCourt(activeBatch.batchId, court.id, 'mixed')}
-                          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-100/90"
-                        >
-                          Start default match
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => startMatchOnCourt(activeBatch.batchId, court.id, 'mixed')}
+                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-100/90"
+                          >
+                            Start default match
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCourtActive(activeBatch.batchId, court.id, false)}
+                            className="rounded-2xl border border-slate-300/20 bg-slate-900/30 px-4 py-3 text-sm font-medium text-slate-100/90"
+                          >
+                            Deactivate
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

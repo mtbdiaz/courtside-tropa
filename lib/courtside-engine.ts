@@ -12,7 +12,7 @@ import type {
   QueueUnit,
 } from '@/types/courtside';
 
-const DEFAULT_COURT_COUNT = 6;
+const DEFAULT_COURT_COUNT = 8;
 
 function now() {
   return new Date().toISOString();
@@ -31,6 +31,7 @@ function buildCourts(count: number): CourtSlot[] {
     id: `court-${index + 1}`,
     label: `Court ${index + 1}`,
     status: 'idle' as const,
+    isActive: true,
     matchId: null,
     mode: null,
     startedAt: null,

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS batches (
   name TEXT NOT NULL,                    -- 'Batch 1' or 'Batch 2'
   start_time TEXT,
   end_time TEXT,
-  num_courts INT DEFAULT 5,
+  num_courts INT DEFAULT 8,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS courts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id UUID REFERENCES batches(id) ON DELETE CASCADE,
   court_number INT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
   status TEXT DEFAULT 'free' CHECK (status IN ('free', 'occupied')),
   current_match_id UUID,
   start_time TIMESTAMPTZ,                -- For live elapsed timer
@@ -109,7 +110,11 @@ CREATE INDEX IF NOT EXISTS idx_matches_queue ON matches(batch_id, queue_position
 CREATE INDEX IF NOT EXISTS idx_matches_locked ON matches(is_locked);
 
 CREATE INDEX IF NOT EXISTS idx_courts_batch ON courts(batch_id);
+CREATE INDEX IF NOT EXISTS idx_courts_batch_active ON courts(batch_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_match_history_batch ON match_history(batch_id);
+
+-- Backfill for existing databases where is_active column doesn't exist yet
+ALTER TABLE courts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
 
 -- Prevent duplicate players in same match (basic safety)
 DO $$
@@ -219,8 +224,8 @@ BEGIN
 
   INSERT INTO batches (event_id, name, start_time, end_time, num_courts)
   VALUES
-    (ev_id, 'Batch 1', '8:00 AM - 12:00 NN', '8:00 AM - 12:00 NN', 5),
-    (ev_id, 'Batch 2', '1:00 PM - 5:00 PM', '1:00 PM - 5:00 PM', 5)
+    (ev_id, 'Batch 1', '8:00 AM - 12:00 NN', '8:00 AM - 12:00 NN', 8),
+    (ev_id, 'Batch 2', '1:00 PM - 5:00 PM', '1:00 PM - 5:00 PM', 8)
   ON CONFLICT (event_id, name) DO NOTHING;
 END $$;
 

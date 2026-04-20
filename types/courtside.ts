@@ -2,7 +2,7 @@ export type BatchId = 1 | 2;
 
 export type Gender = 'M' | 'F';
 
-export type PlayerStatus = 'checked-in' | 'break';
+export type PlayerStatus = 'checked-in' | 'break' | 'playing';
 
 export type MatchMode = 'mixed' | 'custom';
 
@@ -38,6 +38,7 @@ export interface CourtSlot {
   id: string;
   label: string;
   status: CourtStatus;
+  isActive: boolean;
   matchId: string | null;
   mode: MatchMode | null;
   startedAt: string | null;
