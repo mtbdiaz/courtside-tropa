@@ -578,6 +578,22 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     setLastActionError(message);
   }, []);
 
+  const acquireQueueLock = useCallback(async (maxWaitMs = 1200) => {
+    const started = Date.now();
+    while (queueMutationLockRef.current) {
+      if (Date.now() - started >= maxWaitMs) {
+        return false;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 40);
+      });
+    }
+
+    queueMutationLockRef.current = true;
+    return true;
+  }, []);
+
   const activeBatch = snapshot.batches[snapshot.activeBatchId];
 
   const loadFromDatabase = useCallback(async () => {
@@ -1179,11 +1195,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    if (queueMutationLockRef.current) {
+    const lockAcquired = await acquireQueueLock();
+    if (!lockAcquired) {
       return;
     }
-
-    queueMutationLockRef.current = true;
 
     try {
       const batch = snapshot.batches[batchId];
@@ -1305,7 +1320,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     } finally {
       queueMutationLockRef.current = false;
     }
-  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const moveQueueUnit = useCallback(async (batchId: BatchId, matchId: string, direction: 'up' | 'down') => {
     clearActionError();
@@ -1316,11 +1331,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    if (queueMutationLockRef.current) {
+    const lockAcquired = await acquireQueueLock();
+    if (!lockAcquired) {
       return;
     }
-
-    queueMutationLockRef.current = true;
 
     try {
       const { data: queuedRows } = await supabase
@@ -1360,7 +1374,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     } finally {
       queueMutationLockRef.current = false;
     }
-  }, [clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const refreshQueueProcess = useCallback(async (batchId: BatchId) => {
     await ensureReadyMatches(batchId, 6);
@@ -1436,11 +1450,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    if (queueMutationLockRef.current) {
+    const lockAcquired = await acquireQueueLock();
+    if (!lockAcquired) {
       return;
     }
-
-    queueMutationLockRef.current = true;
 
     try {
       if (selectedPlayers && selectedPlayers.playerIds.length === 4) {
@@ -1535,7 +1548,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     } finally {
       queueMutationLockRef.current = false;
     }
-  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const completeMatch = useCallback(async (batchId: BatchId, courtId: string, scoreA: number, scoreB: number) => {
     const supabase = supabaseRef.current;
@@ -1693,11 +1706,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    if (queueMutationLockRef.current) {
+    const lockAcquired = await acquireQueueLock();
+    if (!lockAcquired) {
       return;
     }
-
-    queueMutationLockRef.current = true;
 
     try {
       // VALIDATION: Check for duplicate players
@@ -1843,7 +1855,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     } finally {
       queueMutationLockRef.current = false;
     }
-  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const fillIdleCourts = useCallback(async (batchId: BatchId) => {
     clearActionError();
@@ -1925,11 +1937,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    if (queueMutationLockRef.current) {
+    const lockAcquired = await acquireQueueLock();
+    if (!lockAcquired) {
       return;
     }
-
-    queueMutationLockRef.current = true;
 
     try {
       const startedAt = nowIso();
@@ -1967,7 +1978,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     } finally {
       queueMutationLockRef.current = false;
     }
-  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const signOut = useCallback(async () => {
     const supabase = supabaseRef.current;

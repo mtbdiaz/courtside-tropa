@@ -72,6 +72,7 @@ export default function CourtsideBoard({
   const [scoreDrafts, setScoreDrafts] = useState<Record<string, { a: string; b: string }>>({});
   const [pairSelection, setPairSelection] = useState<string[]>([]);
   const [pairSearch, setPairSearch] = useState('');
+  const [playerSearch, setPlayerSearch] = useState('');
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<'M' | 'F'>('M');
@@ -133,6 +134,21 @@ export default function CourtsideBoard({
     () => [...activeBatch.players].sort((a, b) => a.name.localeCompare(b.name)),
     [activeBatch.players],
   );
+
+  const filteredPlayers = useMemo(() => {
+    const query = playerSearch.trim().toLowerCase();
+    if (!query) {
+      return sortedPlayers;
+    }
+
+    return sortedPlayers.filter((player) => {
+      return (
+        player.name.toLowerCase().includes(query) ||
+        player.gender.toLowerCase().includes(query) ||
+        player.status.toLowerCase().includes(query)
+      );
+    });
+  }, [playerSearch, sortedPlayers]);
 
   const customSearchResults = useMemo(() => {
     const query = customSearch.trim().toLowerCase();
@@ -1217,8 +1233,24 @@ export default function CourtsideBoard({
               <span className="text-xs text-slate-300/80">M / F</span>
             </div>
 
+            <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <label className="text-xs uppercase tracking-[0.2em] text-slate-300/80">Search players</label>
+              <div className="relative mt-2">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-amber-200" />
+                <input
+                  value={playerSearch}
+                  onChange={(event) => setPlayerSearch(event.target.value)}
+                  placeholder="Type name, gender, or status"
+                  className="glass-input w-full rounded-2xl px-10 py-3 text-sm"
+                />
+              </div>
+            </div>
+
             <div className="mt-4 max-h-[32rem] space-y-3 overflow-auto pr-1">
-              {sortedPlayers.map((player) => {
+              {filteredPlayers.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300/80">No players match your search.</div>
+              ) : null}
+              {filteredPlayers.map((player) => {
                 const isEditing = editingPlayerId === player.id;
 
                 return (
