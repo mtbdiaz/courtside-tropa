@@ -1101,7 +1101,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         status: 'queued';
         score_team1: number;
         score_team2: number;
-        is_pair_match: false;
         match_type?: 'mixed';
       } = {
         batch_id: dbBatchId,
@@ -1114,7 +1113,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         status: 'queued',
         score_team1: 0,
         score_team2: 0,
-        is_pair_match: false,
       };
 
       if (supportsMatchTypeRef.current) {
@@ -1249,7 +1247,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         status: 'playing';
         score_team1: number;
         score_team2: number;
-        is_pair_match: boolean;
         match_type?: 'custom';
       } = {
         batch_id: dbBatchId,
@@ -1262,7 +1259,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         status: 'playing',
         score_team1: 0,
         score_team2: 0,
-        is_pair_match: mode === 'custom',
       };
 
       if (supportsMatchTypeRef.current) {
@@ -1582,7 +1578,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       status: 'queued';
       score_team1: number;
       score_team2: number;
-      is_pair_match: false;
       match_type?: 'custom';
     } = {
       batch_id: dbBatchId,
@@ -1595,7 +1590,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       status: 'queued',
       score_team1: 0,
       score_team2: 0,
-      is_pair_match: false,
     };
 
     if (supportsMatchTypeRef.current) {
