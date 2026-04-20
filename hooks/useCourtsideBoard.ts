@@ -539,6 +539,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [lastActionError, setLastActionError] = useState<string | null>(null);
   const [activeModes, setActiveModes] = useState<Record<BatchId, MatchMode>>({ 1: 'mixed', 2: 'mixed' });
+  const loadInFlightRef = useRef(false);
+  const loadAgainRef = useRef(false);
+  const queueMutationLockRef = useRef(false);
 
   const clearActionError = useCallback(() => {
     setLastActionError(null);
@@ -557,19 +560,27 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const isFirstLoad = !isReady;
+    if (loadInFlightRef.current) {
+      loadAgainRef.current = true;
+      return;
+    }
 
-    const [
-      { data: sessionData },
-      { data: batchesData, error: batchesError },
-      { data: playersData, error: playersError },
-      { data: courtsData, error: courtsError },
-    ] = await Promise.all([
-      supabase.auth.getSession(),
-      supabase.from('batches').select('id,name,num_courts,created_at').order('created_at', { ascending: true }),
-      supabase.from('players').select('id,batch_id,name,gender,status,pair_id,created_at').order('created_at', { ascending: true }),
-      supabase.from('courts').select('id,batch_id,court_number,is_active,status,current_match_id,start_time').order('court_number', { ascending: true }),
-    ]);
+    loadInFlightRef.current = true;
+
+    try {
+      const isFirstLoad = !isReady;
+
+      const [
+        { data: sessionData },
+        { data: batchesData, error: batchesError },
+        { data: playersData, error: playersError },
+        { data: courtsData, error: courtsError },
+      ] = await Promise.all([
+        supabase.auth.getSession(),
+        supabase.from('batches').select('id,name,num_courts,created_at').order('created_at', { ascending: true }),
+        supabase.from('players').select('id,batch_id,name,gender,status,pair_id,created_at').order('created_at', { ascending: true }),
+        supabase.from('courts').select('id,batch_id,court_number,is_active,status,current_match_id,start_time').order('court_number', { ascending: true }),
+      ]);
 
     let historyData: MatchHistoryRow[] | null = null;
     let historyError: { code?: string } | null = null;
@@ -635,94 +646,94 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       matchesError = fallback.error as { code?: string } | null;
     }
 
-    if (batchesError || playersError || courtsError || matchesError || historyError) {
-      setSyncStatus('offline');
-      setIsReady(true);
-      return;
-    }
-
-    if (sessionData.session?.user?.email) {
-      setAuthEmail(sessionData.session.user.email);
-    }
-
-    let batches = (batchesData ?? []) as BatchRow[];
-    const players = (playersData ?? []) as PlayerRow[];
-    const courts = (courtsData ?? []) as CourtRow[];
-    const matches = (matchesData ?? []) as MatchRow[];
-    const histories = (historyData ?? []) as MatchHistoryRow[];
-
-    if (batches.length === 0) {
-      const { data: existingEvent } = await supabase.from('events').select('id').limit(1).maybeSingle();
-      let eventId = existingEvent?.id as string | undefined;
-
-      if (!eventId) {
-        const { data: createdEvent } = await supabase
-          .from('events')
-          .insert({
-            name: 'Courtside Tropa',
-            tagline: 'Just One More Game... with Tropa',
-            date: 'May 1, 2026',
-            venue: 'Paddle Up! Davao (Buhangin)',
-          })
-          .select('id')
-          .single();
-        eventId = createdEvent?.id as string | undefined;
-      }
-
-      if (eventId) {
-        await supabase.from('batches').insert([
-          {
-            event_id: eventId,
-            name: 'Batch 1',
-            start_time: '8:00 AM - 12:00 NN',
-            end_time: '8:00 AM - 12:00 NN',
-            num_courts: 8,
-          },
-          {
-            event_id: eventId,
-            name: 'Batch 2',
-            start_time: '1:00 PM - 5:00 PM',
-            end_time: '1:00 PM - 5:00 PM',
-            num_courts: 8,
-          },
-        ]);
-      }
-
-      const { data: refreshedBatches, error: refreshedBatchesError } = await supabase
-        .from('batches')
-        .select('id,name,num_courts,created_at')
-        .order('created_at', { ascending: true });
-
-      if (refreshedBatchesError) {
+      if (batchesError || playersError || courtsError || matchesError || historyError) {
         setSyncStatus('offline');
         setIsReady(true);
         return;
       }
 
-      batches = (refreshedBatches ?? []) as BatchRow[];
-    }
-
-    const byLogicalBatch = new Map<BatchId, BatchRow>();
-
-    for (const batch of batches) {
-      const logical = getBatchIdFromName(batch.name);
-      if (logical) {
-        byLogicalBatch.set(logical, batch);
+      if (sessionData.session?.user?.email) {
+        setAuthEmail(sessionData.session.user.email);
       }
-    }
 
-    if (!byLogicalBatch.has(1) || !byLogicalBatch.has(2)) {
-      const sorted = [...batches].sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''));
-      if (!byLogicalBatch.has(1) && sorted[0]) {
-        byLogicalBatch.set(1, sorted[0]);
-      }
-      if (!byLogicalBatch.has(2) && sorted[1]) {
-        byLogicalBatch.set(2, sorted[1]);
-      }
-    }
+      let batches = (batchesData ?? []) as BatchRow[];
+      const players = (playersData ?? []) as PlayerRow[];
+      const courts = (courtsData ?? []) as CourtRow[];
+      const matches = (matchesData ?? []) as MatchRow[];
+      const histories = (historyData ?? []) as MatchHistoryRow[];
 
-    const next = createEmptyCourtsideSnapshot();
-    const courtsToBootstrap: Array<{
+      if (batches.length === 0) {
+        const { data: existingEvent } = await supabase.from('events').select('id').limit(1).maybeSingle();
+        let eventId = existingEvent?.id as string | undefined;
+
+        if (!eventId) {
+          const { data: createdEvent } = await supabase
+            .from('events')
+            .insert({
+              name: 'Courtside Tropa',
+              tagline: 'Just One More Game... with Tropa',
+              date: 'May 1, 2026',
+              venue: 'Paddle Up! Davao (Buhangin)',
+            })
+            .select('id')
+            .single();
+          eventId = createdEvent?.id as string | undefined;
+        }
+
+        if (eventId) {
+          await supabase.from('batches').insert([
+            {
+              event_id: eventId,
+              name: 'Batch 1',
+              start_time: '8:00 AM - 12:00 NN',
+              end_time: '8:00 AM - 12:00 NN',
+              num_courts: 8,
+            },
+            {
+              event_id: eventId,
+              name: 'Batch 2',
+              start_time: '1:00 PM - 5:00 PM',
+              end_time: '1:00 PM - 5:00 PM',
+              num_courts: 8,
+            },
+          ]);
+        }
+
+        const { data: refreshedBatches, error: refreshedBatchesError } = await supabase
+          .from('batches')
+          .select('id,name,num_courts,created_at')
+          .order('created_at', { ascending: true });
+
+        if (refreshedBatchesError) {
+          setSyncStatus('offline');
+          setIsReady(true);
+          return;
+        }
+
+        batches = (refreshedBatches ?? []) as BatchRow[];
+      }
+
+      const byLogicalBatch = new Map<BatchId, BatchRow>();
+
+      for (const batch of batches) {
+        const logical = getBatchIdFromName(batch.name);
+        if (logical) {
+          byLogicalBatch.set(logical, batch);
+        }
+      }
+
+      if (!byLogicalBatch.has(1) || !byLogicalBatch.has(2)) {
+        const sorted = [...batches].sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''));
+        if (!byLogicalBatch.has(1) && sorted[0]) {
+          byLogicalBatch.set(1, sorted[0]);
+        }
+        if (!byLogicalBatch.has(2) && sorted[1]) {
+          byLogicalBatch.set(2, sorted[1]);
+        }
+      }
+
+      const next = createEmptyCourtsideSnapshot();
+      const courtsToBootstrap: Array<{
       batch_id: string;
       court_number: number;
       is_active: true;
@@ -731,36 +742,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       start_time: null;
     }> = [];
 
-    for (const batchId of [1, 2] as BatchId[]) {
-      const row = byLogicalBatch.get(batchId);
-      if (!row) {
-        next.batches[batchId] = createEmptyBatchSnapshot(batchId);
-        continue;
-      }
+      for (const batchId of [1, 2] as BatchId[]) {
+        const row = byLogicalBatch.get(batchId);
+        if (!row) {
+          next.batches[batchId] = createEmptyBatchSnapshot(batchId);
+          continue;
+        }
 
-      batchDbIdRef.current[batchId] = row.id;
-      const batchCourts = courts.filter((entry) => entry.batch_id === row.id);
-      if (batchCourts.length === 0 && (row.num_courts ?? 0) > 0) {
-        courtsToBootstrap.push(
-          ...Array.from({ length: row.num_courts ?? 0 }, (_, index) => ({
-            batch_id: row.id,
-            court_number: index + 1,
-            is_active: true as const,
-            status: 'free' as const,
-            current_match_id: null,
-            start_time: null,
-          })),
-        );
-      }
-
-      next.batches[batchId] = normalizeSnapshot({
-        batchId,
-        batchRow: row,
-        players: players.filter((entry) => entry.batch_id === row.id),
-        courts: batchCourts.length > 0
-          ? batchCourts
-          : Array.from({ length: row.num_courts ?? 0 }, (_, index) => ({
-              id: `synthetic-${row.id}-${index + 1}`,
+        batchDbIdRef.current[batchId] = row.id;
+        const batchCourts = courts.filter((entry) => entry.batch_id === row.id);
+        if (batchCourts.length === 0 && (row.num_courts ?? 0) > 0) {
+          courtsToBootstrap.push(
+            ...Array.from({ length: row.num_courts ?? 0 }, (_, index) => ({
               batch_id: row.id,
               court_number: index + 1,
               is_active: true as const,
@@ -768,36 +761,61 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
               current_match_id: null,
               start_time: null,
             })),
-        matches: matches.filter((entry) => entry.batch_id === row.id),
-        histories: histories.filter((entry) => entry.batch_id === row.id),
-        activeMode: activeModes[batchId],
-      });
-    }
+          );
+        }
 
-    if (courtsToBootstrap.length > 0) {
-      const { error: bootstrapError } = await supabase.from('courts').insert(courtsToBootstrap);
-      if (bootstrapError) {
-        console.error('Court bootstrap failed', bootstrapError);
+        next.batches[batchId] = normalizeSnapshot({
+          batchId,
+          batchRow: row,
+          players: players.filter((entry) => entry.batch_id === row.id),
+          courts: batchCourts.length > 0
+            ? batchCourts
+            : Array.from({ length: row.num_courts ?? 0 }, (_, index) => ({
+                id: `synthetic-${row.id}-${index + 1}`,
+                batch_id: row.id,
+                court_number: index + 1,
+                is_active: true as const,
+                status: 'free' as const,
+                current_match_id: null,
+                start_time: null,
+              })),
+          matches: matches.filter((entry) => entry.batch_id === row.id),
+          histories: histories.filter((entry) => entry.batch_id === row.id),
+          activeMode: activeModes[batchId],
+        });
+      }
+
+      if (courtsToBootstrap.length > 0) {
+        const { error: bootstrapError } = await supabase.from('courts').insert(courtsToBootstrap);
+        if (bootstrapError) {
+          console.error('Court bootstrap failed', bootstrapError);
+        }
+      }
+
+      const hasData = (batchId: BatchId) => {
+        const batch = next.batches[batchId];
+        return batch.players.length > 0 || batch.courts.some((court) => court.status === 'live') || batch.queueOrder.length > 0 || batch.history.length > 0;
+      };
+
+      const nextActiveBatchId =
+        (isFirstLoad && !hasData(initialBatchId)
+          ? ([1, 2] as BatchId[]).find((batchId) => hasData(batchId)) ?? initialBatchId
+          : initialBatchId);
+
+      setSnapshot((current) => ({
+        ...next,
+        activeBatchId: isFirstLoad ? nextActiveBatchId : current.activeBatchId,
+        lastUpdated: nowIso(),
+      }));
+      setSyncStatus('online');
+      setIsReady(true);
+    } finally {
+      loadInFlightRef.current = false;
+      if (loadAgainRef.current) {
+        loadAgainRef.current = false;
+        void loadFromDatabase();
       }
     }
-
-    const hasData = (batchId: BatchId) => {
-      const batch = next.batches[batchId];
-      return batch.players.length > 0 || batch.courts.some((court) => court.status === 'live') || batch.queueOrder.length > 0 || batch.history.length > 0;
-    };
-
-    const nextActiveBatchId =
-      (isFirstLoad && !hasData(initialBatchId)
-        ? ([1, 2] as BatchId[]).find((batchId) => hasData(batchId)) ?? initialBatchId
-        : initialBatchId);
-
-    setSnapshot((current) => ({
-      ...next,
-      activeBatchId: isFirstLoad ? nextActiveBatchId : current.activeBatchId,
-      lastUpdated: nowIso(),
-    }));
-    setSyncStatus('online');
-    setIsReady(true);
   }, [activeModes, isReady, initialBatchId]);
 
   const withBatchDbId = useCallback((batchId: BatchId) => batchDbIdRef.current[batchId], []);
@@ -1135,8 +1153,16 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const batch = snapshot.batches[batchId];
-    const { data: queuedRows } = await supabase
+    if (queueMutationLockRef.current) {
+      reportActionError('Queue generation is already running. Please wait a moment.');
+      return;
+    }
+
+    queueMutationLockRef.current = true;
+
+    try {
+      const batch = snapshot.batches[batchId];
+      const { data: queuedRows } = await supabase
       .from('matches')
       .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,start_time,queue_position')
       .eq('batch_id', dbBatchId)
@@ -1256,7 +1282,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
     }
 
-    await loadFromDatabase();
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const moveQueueUnit = useCallback(async (batchId: BatchId, matchId: string, direction: 'up' | 'down') => {
@@ -1268,7 +1297,15 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const { data: queuedRows } = await supabase
+    if (queueMutationLockRef.current) {
+      reportActionError('Queue reorder is already running. Please wait a moment.');
+      return;
+    }
+
+    queueMutationLockRef.current = true;
+
+    try {
+      const { data: queuedRows } = await supabase
       .from('matches')
       .select('id,queue_position,start_time')
       .eq('batch_id', dbBatchId)
@@ -1307,7 +1344,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
     }
 
-    await loadFromDatabase();
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
   }, [clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const refreshQueueProcess = useCallback(async (batchId: BatchId) => {
@@ -1384,8 +1424,16 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    if (selectedPlayers && selectedPlayers.playerIds.length === 4) {
-      const payload: {
+    if (queueMutationLockRef.current) {
+      reportActionError('Start match is already running. Please wait a moment.');
+      return;
+    }
+
+    queueMutationLockRef.current = true;
+
+    try {
+      if (selectedPlayers && selectedPlayers.playerIds.length === 4) {
+        const payload: {
         batch_id: string;
         court_id: string;
         team1_player1_id: string | null;
@@ -1414,11 +1462,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         payload.match_type = 'custom';
       }
 
-      const { data: inserted } = await supabase.from('matches').insert(payload).select('id').single();
-      if (!inserted?.id) {
-        reportActionError('Start match failed: could not create match record.');
-        return;
-      }
+        const { data: inserted } = await supabase.from('matches').insert(payload).select('id').single();
+        if (!inserted?.id) {
+          reportActionError('Start match failed: could not create match record.');
+          return;
+        }
 
       await supabase.from('courts').update({
         status: 'occupied',
@@ -1426,9 +1474,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         start_time: nowIso(),
       }).eq('id', courtId);
 
-      await loadFromDatabase();
-      return;
-    }
+        await loadFromDatabase();
+        return;
+      }
 
     const { data: queuedRows } = await supabase
       .from('matches')
@@ -1472,7 +1520,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    await loadFromDatabase();
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const completeMatch = useCallback(async (batchId: BatchId, courtId: string, scoreA: number, scoreB: number) => {
@@ -1631,12 +1682,20 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    // VALIDATION: Check for duplicate players
-    const uniqueIds = Array.from(new Set(playerIds));
-    if (uniqueIds.length !== 4) {
-      reportActionError('Custom match failed: duplicate players selected.');
+    if (queueMutationLockRef.current) {
+      reportActionError('Custom match is already running. Please wait a moment.');
       return;
     }
+
+    queueMutationLockRef.current = true;
+
+    try {
+      // VALIDATION: Check for duplicate players
+      const uniqueIds = Array.from(new Set(playerIds));
+      if (uniqueIds.length !== 4) {
+        reportActionError('Custom match failed: duplicate players selected.');
+        return;
+      }
 
     const batch = snapshot.batches[batchId];
 
@@ -1699,10 +1758,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
     }
 
-    if (validationErrors.length > 0) {
-      reportActionError(`Custom match failed: ${validationErrors.join('; ')}`);
-      return;
-    }
+      if (validationErrors.length > 0) {
+        reportActionError(`Custom match failed: ${validationErrors.join('; ')}`);
+        return;
+      }
 
     for (let i = 0; i < orderedQueue.length; i += 1) {
       const { error: resequenceError } = await supabase
@@ -1777,7 +1836,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    await loadFromDatabase();
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const fillIdleCourts = useCallback(async (batchId: BatchId) => {
@@ -1789,10 +1851,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const idleCourts = snapshot.batches[batchId].courts.filter((court) => court.status === 'idle' && court.isActive);
-    if (idleCourts.length === 0) {
+    if (queueMutationLockRef.current) {
+      reportActionError('Auto-fill is already running. Please wait a moment.');
       return;
     }
+
+    queueMutationLockRef.current = true;
+
+    try {
+      const idleCourts = snapshot.batches[batchId].courts.filter((court) => court.status === 'idle' && court.isActive);
+      if (idleCourts.length === 0) {
+        return;
+      }
 
     const { data: queuedRows } = await supabase
       .from('matches')
@@ -1842,7 +1912,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
     }
 
-    await loadFromDatabase();
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const startQueuedMatchOnCourt = useCallback(async (batchId: BatchId, courtId: string, matchId: string) => {
@@ -1860,8 +1933,16 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const startedAt = nowIso();
-    const { error: matchUpdateError } = await supabase
+    if (queueMutationLockRef.current) {
+      reportActionError('Queue-to-court is already running. Please wait a moment.');
+      return;
+    }
+
+    queueMutationLockRef.current = true;
+
+    try {
+      const startedAt = nowIso();
+      const { error: matchUpdateError } = await supabase
       .from('matches')
       .update({
         court_id: courtId,
@@ -1891,7 +1972,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    await loadFromDatabase();
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const signOut = useCallback(async () => {
