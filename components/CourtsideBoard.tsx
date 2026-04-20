@@ -56,7 +56,6 @@ export default function CourtsideBoard({
     ensureReadyMatches,
     enqueueCustomMatch,
     startQueuedMatchOnCourt,
-    startMatchOnCourt,
     completeMatch,
     cancelMatch,
     fillIdleCourts,
@@ -79,6 +78,18 @@ export default function CourtsideBoard({
   const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>({ 1: false, 2: false });
   const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>({ 1: true, 2: true });
   const autoFillRunningRef = useRef(false);
+
+  useEffect(() => {
+    if (!lastActionError) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      clearActionError();
+    }, 3500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [clearActionError, lastActionError]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -747,7 +758,7 @@ export default function CourtsideBoard({
       </section>
 
       {lastActionError ? (
-        <section className="rounded-2xl border border-rose-300/35 bg-rose-500/10 px-4 py-3 text-sm text-rose-100/95">
+        <div className="fixed right-4 top-4 z-50 w-[min(92vw,24rem)] rounded-2xl border border-rose-300/35 bg-slate-950/90 px-4 py-3 text-sm text-rose-100 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
           <div className="flex items-start justify-between gap-3">
             <span>{lastActionError}</span>
             <button
@@ -755,10 +766,10 @@ export default function CourtsideBoard({
               onClick={clearActionError}
               className="rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs font-medium text-rose-100"
             >
-              Dismiss
+              x
             </button>
           </div>
-        </section>
+        </div>
       ) : null}
 
       {batchCounts.checkedIn < 4 ? (
@@ -1128,13 +1139,6 @@ export default function CourtsideBoard({
                     ) : (
                       <div className="mt-3">
                         <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => startMatchOnCourt(activeBatch.batchId, court.id, 'mixed')}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-100/90"
-                          >
-                            Start default match
-                          </button>
                           <button
                             type="button"
                             onClick={() => setCourtActive(activeBatch.batchId, court.id, false)}

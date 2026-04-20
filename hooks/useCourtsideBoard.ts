@@ -1154,7 +1154,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (queueMutationLockRef.current) {
-      reportActionError('Queue generation is already running. Please wait a moment.');
       return;
     }
 
@@ -1298,7 +1297,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (queueMutationLockRef.current) {
-      reportActionError('Queue reorder is already running. Please wait a moment.');
       return;
     }
 
@@ -1425,7 +1423,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (queueMutationLockRef.current) {
-      reportActionError('Start match is already running. Please wait a moment.');
       return;
     }
 
@@ -1683,7 +1680,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (queueMutationLockRef.current) {
-      reportActionError('Custom match is already running. Please wait a moment.');
       return;
     }
 
@@ -1851,18 +1847,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    if (queueMutationLockRef.current) {
-      reportActionError('Auto-fill is already running. Please wait a moment.');
+    const idleCourts = snapshot.batches[batchId].courts.filter((court) => court.status === 'idle' && court.isActive);
+    if (idleCourts.length === 0) {
       return;
     }
-
-    queueMutationLockRef.current = true;
-
-    try {
-      const idleCourts = snapshot.batches[batchId].courts.filter((court) => court.status === 'idle' && court.isActive);
-      if (idleCourts.length === 0) {
-        return;
-      }
 
     const { data: queuedRows } = await supabase
       .from('matches')
@@ -1912,10 +1900,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       }
     }
 
-      await loadFromDatabase();
-    } finally {
-      queueMutationLockRef.current = false;
-    }
+    await loadFromDatabase();
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const startQueuedMatchOnCourt = useCallback(async (batchId: BatchId, courtId: string, matchId: string) => {
@@ -1934,7 +1919,6 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (queueMutationLockRef.current) {
-      reportActionError('Queue-to-court is already running. Please wait a moment.');
       return;
     }
 
