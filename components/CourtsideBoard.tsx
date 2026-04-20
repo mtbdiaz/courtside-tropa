@@ -496,7 +496,7 @@ export default function CourtsideBoard({
                 {nextTwoMatches.length > 1 ? (
                   <div className="rounded-[2rem] border border-white/20 bg-white/5 p-5">
                     <div className="mb-3 flex items-center justify-between gap-2">
-                      <div className="text-xs font-bold uppercase tracking-[0.3em] text-white/70">Match #2 (Preview)</div>
+                      <div className="text-xs font-bold uppercase tracking-[0.3em] text-white/70">Match #2 (Be Ready)</div>
                       <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200/80">
                         {nextTwoMatches[1]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
                       </div>

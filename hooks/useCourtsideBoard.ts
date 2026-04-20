@@ -370,6 +370,72 @@ function chooseFairReadyMatch(
   };
 }
 
+function chooseReadyMatchWithLockedPair(
+  availablePlayers: Player[],
+  stats: ReturnType<typeof getPlayerStats>,
+  pairMateByPlayerId: Map<string, string>,
+): { teamA: [string, string]; teamB: [string, string] } | null {
+  if (availablePlayers.length < 4) {
+    return null;
+  }
+
+  const availableById = new Map(availablePlayers.map((player) => [player.id, player]));
+  const pairCandidates: Array<[string, string]> = [];
+  const seen = new Set<string>();
+
+  for (const player of availablePlayers) {
+    const mateId = pairMateByPlayerId.get(player.id);
+    if (!mateId || !availableById.has(mateId)) {
+      continue;
+    }
+
+    const ids = [player.id, mateId].sort();
+    const key = ids.join('-');
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    pairCandidates.push([ids[0], ids[1]]);
+  }
+
+  if (pairCandidates.length === 0) {
+    return null;
+  }
+
+  pairCandidates.sort((a, b) => {
+    const aScore = (stats.get(a[0])?.gamesPlayed ?? 0) + (stats.get(a[1])?.gamesPlayed ?? 0);
+    const bScore = (stats.get(b[0])?.gamesPlayed ?? 0) + (stats.get(b[1])?.gamesPlayed ?? 0);
+    if (aScore !== bScore) {
+      return aScore - bScore;
+    }
+
+    const aCreated = (availableById.get(a[0])?.createdAt ?? '').localeCompare(availableById.get(a[1])?.createdAt ?? '');
+    const bCreated = (availableById.get(b[0])?.createdAt ?? '').localeCompare(availableById.get(b[1])?.createdAt ?? '');
+    return aCreated - bCreated;
+  });
+
+  const selectedPair = pairCandidates[0];
+  const opponents = availablePlayers
+    .filter((player) => player.id !== selectedPair[0] && player.id !== selectedPair[1])
+    .sort((a, b) => {
+      const gameDiff = (stats.get(a.id)?.gamesPlayed ?? 0) - (stats.get(b.id)?.gamesPlayed ?? 0);
+      if (gameDiff !== 0) {
+        return gameDiff;
+      }
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+
+  if (opponents.length < 2) {
+    return null;
+  }
+
+  return {
+    teamA: [selectedPair[0], selectedPair[1]],
+    teamB: [opponents[0].id, opponents[1].id],
+  };
+}
+
 function normalizeSnapshot(input: {
   batchId: BatchId;
   batchRow: BatchRow;
@@ -464,7 +530,7 @@ function normalizeSnapshot(input: {
         status: liveMatch || fallbackLive ? ('live' as const) : ('idle' as const),
         matchId: liveMatch?.id ?? court.current_match_id,
         mode: liveMatch
-          ? modeFromPlayers(ids.map((id) => playersById.get(id)?.gender ?? 'M'))
+          ? (liveMatch.match_type ?? modeFromPlayers(ids.map((id) => playersById.get(id)?.gender ?? 'M')))
           : null,
         startedAt: liveMatch?.start_time ?? court.start_time,
         sourceUnitIds: ids,
@@ -483,7 +549,7 @@ function normalizeSnapshot(input: {
       batchId: input.batchId,
       courtId: match.court_id ?? '',
       courtLabel: `Court ${input.courts.find((court) => court.id === match.court_id)?.court_number ?? '-'}`,
-      mode: modeFromPlayers(allIds.map((id) => playersById.get(id)?.gender ?? 'M')),
+      mode: (match.match_type ?? modeFromPlayers(allIds.map((id) => playersById.get(id)?.gender ?? 'M'))),
       sourceUnitIds: allIds,
       playerIds: allIds,
       teamA: [match.team1_player1_id, match.team1_player2_id].filter(Boolean).map((id) => playersById.get(id!)?.name ?? 'Unknown'),
@@ -516,7 +582,7 @@ function normalizeSnapshot(input: {
         batchId: input.batchId,
         courtId: match.court_id ?? '',
         courtLabel: `Court ${matchHistory?.court_number ?? input.courts.find((court) => court.id === match.court_id)?.court_number ?? '-'}`,
-        mode: modeFromPlayers(allIds.map((id) => playersById.get(id)?.gender ?? 'M')),
+        mode: (match.match_type ?? modeFromPlayers(allIds.map((id) => playersById.get(id)?.gender ?? 'M'))),
         sourceUnitIds: allIds,
         playerIds: allIds,
         teamA: [match.team1_player1_id, match.team1_player2_id].filter(Boolean).map((id) => playersById.get(id!)?.name ?? 'Unknown'),
@@ -1155,19 +1221,41 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     await loadFromDatabase();
   }, [loadFromDatabase, snapshot.batches]);
 
-  const lockSelectedPair = useCallback(async (_batchId: BatchId, firstPlayerId: string, secondPlayerId: string) => {
+  const lockSelectedPair = useCallback(async (batchId: BatchId, firstPlayerId: string, secondPlayerId: string) => {
     const supabase = supabaseRef.current;
     if (!supabase || firstPlayerId === secondPlayerId) {
       return;
     }
+
+    const dbBatchId = withBatchDbId(batchId);
 
     await Promise.all([
       supabase.from('players').update({ pair_id: secondPlayerId }).eq('id', firstPlayerId),
       supabase.from('players').update({ pair_id: firstPlayerId }).eq('id', secondPlayerId),
     ]);
 
+    if (dbBatchId) {
+      const { data: queuedRows } = await supabase
+        .from('matches')
+        .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id')
+        .eq('batch_id', dbBatchId)
+        .in('status', ['queued', 'active'])
+        .is('court_id', null);
+
+      const affectedMatchIds = (queuedRows ?? [])
+        .filter((row) => {
+          const ids = matchPlayerIds(row);
+          return ids.includes(firstPlayerId) || ids.includes(secondPlayerId);
+        })
+        .map((row) => row.id);
+
+      if (affectedMatchIds.length > 0) {
+        await supabase.from('matches').delete().in('id', affectedMatchIds).eq('batch_id', dbBatchId).is('court_id', null);
+      }
+    }
+
     await loadFromDatabase();
-  }, [loadFromDatabase]);
+  }, [loadFromDatabase, withBatchDbId]);
 
   const unlockSelectedPair = useCallback(async (batchId: BatchId, pairId: string) => {
     const supabase = supabaseRef.current;
@@ -1261,12 +1349,17 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     const stats = getPlayerStats(batch);
+    const pairMateByPlayerId = new Map<string, string>();
+    for (const pair of batch.pairs) {
+      pairMateByPlayerId.set(pair.playerIds[0], pair.playerIds[1]);
+      pairMateByPlayerId.set(pair.playerIds[1], pair.playerIds[0]);
+    }
     const available = batch.players.filter((player) => player.status === 'checked-in' && !reserved.has(player.id));
     const needed = targetReadyMatches - readyRows.length;
     const base = Date.now();
 
     for (let index = 0; index < needed; index += 1) {
-      const next = chooseFairReadyMatch(available, stats);
+      const next = chooseReadyMatchWithLockedPair(available, stats, pairMateByPlayerId) ?? chooseFairReadyMatch(available, stats);
       if (!next) {
         break;
       }
