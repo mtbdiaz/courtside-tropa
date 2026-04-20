@@ -353,11 +353,34 @@ function normalizeSnapshot(input: {
   histories: MatchHistoryRow[];
   activeMode: MatchMode;
 }): BatchSnapshot {
+  const liveMatches = input.matches.filter((row) => isPlayingMatchStatus(row.status) && row.court_id);
+  const queuedMatches = input.matches
+    .filter((row) => isQueuedMatchStatus(row.status) && !row.court_id)
+    .sort((a, b) => {
+      const aPos = a.queue_position ?? Number.MAX_SAFE_INTEGER;
+      const bPos = b.queue_position ?? Number.MAX_SAFE_INTEGER;
+      if (aPos !== bPos) {
+        return aPos - bPos;
+      }
+
+      return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
+    });
+
+  const livePlayerIds = new Set<string>();
+  for (const match of liveMatches) {
+    matchPlayerIds(match).forEach((id) => livePlayerIds.add(id));
+  }
+
+  const queuedPlayerIds = new Set<string>();
+  for (const match of queuedMatches) {
+    matchPlayerIds(match).forEach((id) => queuedPlayerIds.add(id));
+  }
+
   const basePlayers: Player[] = input.players.map((row) => ({
     id: row.id,
     name: row.name,
     gender: row.gender,
-    status: row.status,
+    status: livePlayerIds.has(row.id) ? 'playing' : queuedPlayerIds.has(row.id) ? 'checked-in' : row.status,
     pairId: row.pair_id,
     createdAt: row.created_at ?? nowIso(),
     updatedAt: row.created_at ?? nowIso(),
@@ -376,18 +399,6 @@ function normalizeSnapshot(input: {
 
   const playersById = new Map(players.map((player) => [player.id, player]));
 
-  const liveMatches = input.matches.filter((row) => isPlayingMatchStatus(row.status) && row.court_id);
-  const queuedMatches = input.matches
-    .filter((row) => isQueuedMatchStatus(row.status) && !row.court_id)
-    .sort((a, b) => {
-      const aPos = a.queue_position ?? Number.MAX_SAFE_INTEGER;
-      const bPos = b.queue_position ?? Number.MAX_SAFE_INTEGER;
-      if (aPos !== bPos) {
-        return aPos - bPos;
-      }
-
-      return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
-    });
   const activePlayerIds = new Set<string>();
   for (const match of liveMatches) {
     [match.team1_player1_id, match.team1_player2_id, match.team2_player1_id, match.team2_player2_id].forEach((id) => {
