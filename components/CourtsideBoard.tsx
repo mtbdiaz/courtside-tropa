@@ -37,6 +37,8 @@ export default function CourtsideBoard({
     activeBatch,
     isReady,
     batchCounts,
+    lastActionError,
+    clearActionError,
     authEmail,
     setActiveBatchId,
     setCourtCount,
@@ -743,6 +745,21 @@ export default function CourtsideBoard({
         <StatCard label="Live courts" value={batchCounts.activeCourts} />
         <StatCard label="Break" value={batchCounts.onBreak} />
       </section>
+
+      {lastActionError ? (
+        <section className="rounded-2xl border border-rose-300/35 bg-rose-500/10 px-4 py-3 text-sm text-rose-100/95">
+          <div className="flex items-start justify-between gap-3">
+            <span>{lastActionError}</span>
+            <button
+              type="button"
+              onClick={clearActionError}
+              className="rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs font-medium text-rose-100"
+            >
+              Dismiss
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {batchCounts.checkedIn < 4 ? (
         <section className="rounded-2xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/95">

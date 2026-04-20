@@ -526,7 +526,17 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const [isReady, setIsReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'loading' | 'online' | 'offline'>('loading');
   const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const [lastActionError, setLastActionError] = useState<string | null>(null);
   const [activeModes, setActiveModes] = useState<Record<BatchId, MatchMode>>({ 1: 'mixed', 2: 'mixed' });
+
+  const clearActionError = useCallback(() => {
+    setLastActionError(null);
+  }, []);
+
+  const reportActionError = useCallback((message: string) => {
+    console.error(message);
+    setLastActionError(message);
+  }, []);
 
   const activeBatch = snapshot.batches[snapshot.activeBatchId];
 
@@ -858,29 +868,37 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [loadFromDatabase, withBatchDbId]);
 
   const setCourtActive = useCallback(async (batchId: BatchId, courtId: string, isActive: boolean) => {
+    clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
     if (!supabase || !dbBatchId) {
+      reportActionError('Court update failed: missing database connection or batch mapping.');
       return;
     }
 
     const court = snapshot.batches[batchId].courts.find((entry) => entry.id === courtId);
     if (!court) {
+      reportActionError('Court update failed: selected court was not found.');
       return;
     }
 
     if (!isActive && court.status === 'live') {
+      reportActionError('Court update failed: cannot deactivate a live court.');
       return;
     }
 
-    await supabase
+    const { error } = await supabase
       .from('courts')
       .update({ is_active: isActive })
       .eq('id', courtId)
       .eq('batch_id', dbBatchId);
+    if (error) {
+      reportActionError(`Court update failed: ${error.message}`);
+      return;
+    }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const addSinglePlayer = useCallback(async (batchId: BatchId, name: string, gender: Gender) => {
     const supabase = supabaseRef.current;
@@ -1098,9 +1116,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [loadFromDatabase, snapshot.batches]);
 
   const ensureReadyMatches = useCallback(async (batchId: BatchId, targetReadyMatches = 6) => {
+    clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
     if (!supabase || !dbBatchId) {
+      reportActionError('Queue generation failed: missing database connection or batch mapping.');
       return;
     }
 
@@ -1140,7 +1160,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     for (const row of sortedRows) {
       const ids = matchPlayerIds(row);
       if (ids.length !== 4 || hasAnyPlayerConflict(ids, reserved)) {
-        await supabase.from('matches').delete().eq('id', row.id).eq('batch_id', dbBatchId).is('court_id', null);
+        const { error: deleteError } = await supabase.from('matches').delete().eq('id', row.id).eq('batch_id', dbBatchId).is('court_id', null);
+        if (deleteError) {
+          reportActionError(`Queue cleanup failed: ${deleteError.message}`);
+        }
         continue;
       }
 
@@ -1149,12 +1172,16 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     for (let i = 0; i < readyRows.length; i += 1) {
-      await supabase
+      const { error: resequenceError } = await supabase
         .from('matches')
         .update({ queue_position: i + 1 })
         .eq('id', readyRows[i].id)
         .eq('batch_id', dbBatchId)
         .is('court_id', null);
+      if (resequenceError) {
+        reportActionError(`Queue resequencing failed: ${resequenceError.message}`);
+        return;
+      }
     }
 
     if (readyRows.length >= targetReadyMatches) {
@@ -1204,7 +1231,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         payload.match_type = 'mixed';
       }
 
-      await supabase.from('matches').insert(payload);
+      const { error: insertError } = await supabase.from('matches').insert(payload);
+      if (insertError) {
+        reportActionError(`Queue generation failed: ${insertError.message}`);
+        return;
+      }
 
       const used = new Set([...next.teamA, ...next.teamB]);
       for (let i = available.length - 1; i >= 0; i -= 1) {
@@ -1215,12 +1246,14 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const moveQueueUnit = useCallback(async (batchId: BatchId, matchId: string, direction: 'up' | 'down') => {
+    clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
     if (!supabase || !dbBatchId) {
+      reportActionError('Queue reorder failed: missing database connection or batch mapping.');
       return;
     }
 
@@ -1252,15 +1285,19 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     queue.splice(targetIndex, 0, moved);
 
     for (let i = 0; i < queue.length; i += 1) {
-      await supabase
+      const { error: updateError } = await supabase
         .from('matches')
         .update({ queue_position: i + 1 })
         .eq('id', queue[i].id)
         .eq('batch_id', dbBatchId);
+      if (updateError) {
+        reportActionError(`Queue reorder failed: ${updateError.message}`);
+        return;
+      }
     }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const refreshQueueProcess = useCallback(async (batchId: BatchId) => {
     await ensureReadyMatches(batchId, 6);
@@ -1322,14 +1359,17 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
 
   const startMatchOnCourt = useCallback(async (batchId: BatchId, courtId: string, mode: MatchMode, selectedPlayers?: CustomMatchSelection) => {
+    clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
     if (!supabase || !dbBatchId) {
+      reportActionError('Start match failed: missing database connection or batch mapping.');
       return;
     }
 
     const targetCourt = snapshot.batches[batchId].courts.find((court) => court.id === courtId);
     if (!targetCourt?.isActive) {
+      reportActionError('Start match failed: selected court is inactive.');
       return;
     }
 
@@ -1365,6 +1405,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       const { data: inserted } = await supabase.from('matches').insert(payload).select('id').single();
       if (!inserted?.id) {
+        reportActionError('Start match failed: could not create match record.');
         return;
       }
 
@@ -1390,10 +1431,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     const nextReady = queuedRows?.[0];
     if (!nextReady) {
+      reportActionError('Start match failed: no queued matches available.');
       return;
     }
 
-    await supabase
+    const { error: matchUpdateError } = await supabase
       .from('matches')
       .update({
         court_id: courtId,
@@ -1404,15 +1446,23 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .eq('id', nextReady.id)
       .eq('batch_id', dbBatchId)
       .is('court_id', null);
+    if (matchUpdateError) {
+      reportActionError(`Start match failed: ${matchUpdateError.message}`);
+      return;
+    }
 
-    await supabase.from('courts').update({
+    const { error: courtUpdateError } = await supabase.from('courts').update({
       status: 'occupied',
       current_match_id: nextReady.id,
       start_time: nowIso(),
     }).eq('id', courtId);
+    if (courtUpdateError) {
+      reportActionError(`Start match failed while updating court: ${courtUpdateError.message}`);
+      return;
+    }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const completeMatch = useCallback(async (batchId: BatchId, courtId: string, scoreA: number, scoreB: number) => {
     const supabase = supabaseRef.current;
@@ -1562,16 +1612,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [loadFromDatabase, withBatchDbId]);
 
   const enqueueCustomMatch = useCallback(async (batchId: BatchId, playerIds: string[], placement: 'top' | 'bottom') => {
+    clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
     if (!supabase || !dbBatchId || playerIds.length !== 4) {
+      reportActionError('Custom match failed: select exactly 4 players and ensure batch is connected.');
       return;
     }
 
     // VALIDATION: Check for duplicate players
     const uniqueIds = Array.from(new Set(playerIds));
     if (uniqueIds.length !== 4) {
-      console.error('Custom match validation failed: Duplicate players detected');
+      reportActionError('Custom match failed: duplicate players selected.');
       return;
     }
 
@@ -1637,17 +1689,21 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     if (validationErrors.length > 0) {
-      console.error('Custom match validation failed:', validationErrors.join('; '));
+      reportActionError(`Custom match failed: ${validationErrors.join('; ')}`);
       return;
     }
 
     for (let i = 0; i < orderedQueue.length; i += 1) {
-      await supabase
+      const { error: resequenceError } = await supabase
         .from('matches')
         .update({ queue_position: i + 1 })
         .eq('id', orderedQueue[i].id)
         .eq('batch_id', dbBatchId)
         .is('court_id', null);
+      if (resequenceError) {
+        reportActionError(`Custom match failed while resequencing queue: ${resequenceError.message}`);
+        return;
+      }
     }
 
     const insertPosition = placement === 'top'
@@ -1660,12 +1716,16 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         continue;
       }
 
-      await supabase
+      const { error: shiftError } = await supabase
         .from('matches')
         .update({ queue_position: currentPosition + 1 })
         .eq('id', orderedQueue[i].id)
         .eq('batch_id', dbBatchId)
         .is('court_id', null);
+      if (shiftError) {
+        reportActionError(`Custom match failed while shifting queue: ${shiftError.message}`);
+        return;
+      }
     }
 
     // INSERT CUSTOM MATCH
@@ -1700,15 +1760,21 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       payload.match_type = 'custom';
     }
 
-    await supabase.from('matches').insert(payload);
+    const { error: insertError } = await supabase.from('matches').insert(payload);
+    if (insertError) {
+      reportActionError(`Custom match insert failed: ${insertError.message}`);
+      return;
+    }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const fillIdleCourts = useCallback(async (batchId: BatchId) => {
+    clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
     if (!supabase || !dbBatchId) {
+      reportActionError('Auto-fill failed: missing database connection or batch mapping.');
       return;
     }
 
@@ -1734,7 +1800,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       const readyMatch = ready[i];
       const startedAt = nowIso();
 
-      await supabase
+      const { error: assignError } = await supabase
         .from('matches')
         .update({
           court_id: court.id,
@@ -1745,8 +1811,12 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         .eq('id', readyMatch.id)
         .eq('batch_id', dbBatchId)
         .is('court_id', null);
+      if (assignError) {
+        reportActionError(`Auto-fill failed while assigning match: ${assignError.message}`);
+        return;
+      }
 
-      await supabase
+      const { error: courtUpdateError } = await supabase
         .from('courts')
         .update({
           status: 'occupied',
@@ -1755,25 +1825,32 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         })
         .eq('id', court.id)
         .eq('batch_id', dbBatchId);
+      if (courtUpdateError) {
+        reportActionError(`Auto-fill failed while updating court: ${courtUpdateError.message}`);
+        return;
+      }
     }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const startQueuedMatchOnCourt = useCallback(async (batchId: BatchId, courtId: string, matchId: string) => {
+    clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
     if (!supabase || !dbBatchId) {
+      reportActionError('Queue-to-court failed: missing database connection or batch mapping.');
       return;
     }
 
     const targetCourt = snapshot.batches[batchId].courts.find((court) => court.id === courtId);
     if (!targetCourt?.isActive) {
+      reportActionError('Queue-to-court failed: selected court is inactive.');
       return;
     }
 
     const startedAt = nowIso();
-    await supabase
+    const { error: matchUpdateError } = await supabase
       .from('matches')
       .update({
         court_id: courtId,
@@ -1784,8 +1861,12 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       .eq('id', matchId)
       .eq('batch_id', dbBatchId)
       .is('court_id', null);
+    if (matchUpdateError) {
+      reportActionError(`Queue-to-court failed: ${matchUpdateError.message}`);
+      return;
+    }
 
-    await supabase
+    const { error: courtUpdateError } = await supabase
       .from('courts')
       .update({
         status: 'occupied',
@@ -1794,9 +1875,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       })
       .eq('id', courtId)
       .eq('batch_id', dbBatchId);
+    if (courtUpdateError) {
+      reportActionError(`Queue-to-court failed while updating court: ${courtUpdateError.message}`);
+      return;
+    }
 
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const signOut = useCallback(async () => {
     const supabase = supabaseRef.current;
@@ -1838,6 +1923,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     batchCounts,
     isReady,
     syncStatus,
+    lastActionError,
+    clearActionError,
     authEmail,
     setActiveBatchId,
     setMode,
