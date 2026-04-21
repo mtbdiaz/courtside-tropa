@@ -712,7 +712,7 @@ function readPersistedBatchUiSettings() {
                       }`}
                     >
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-100">Match #1</div>
+                        <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-100">Match #1 (BE READY)</div>
                         <div className="rounded-full bg-amber-300/30 px-3 py-1 text-xs font-bold text-amber-100">
                           {nextTwoMatches[0]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
                         </div>
