@@ -235,7 +235,8 @@ function readPersistedBatchUiSettings() {
 
     return {
       queuePausedByBatch: normalizeBooleanRecord(parsed.queuePausedByBatch, DEFAULT_QUEUE_PAUSED_BY_BATCH),
-      autoFillEnabledByBatch: normalizeBooleanRecord(parsed.autoFillEnabledByBatch, DEFAULT_AUTOFILL_ENABLED_BY_BATCH),
+      // Auto-fill should always start disabled on a fresh login/session.
+      autoFillEnabledByBatch: DEFAULT_AUTOFILL_ENABLED_BY_BATCH,
     };
   } catch {
     return {
@@ -380,16 +381,10 @@ function readPersistedBatchUiSettings() {
     }
 
     return activeBatch.players
-      .filter(
-        (player) =>
-          player.status === 'checked-in' &&
-          !player.pairId &&
-          !activePlayers.has(player.id) &&
-          player.name.toLowerCase().includes(query),
-      )
+      .filter((player) => player.name.toLowerCase().includes(query))
       .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 12);
-  }, [activeBatch.players, activePlayers, pairSearch]);
+      .slice(0, 30);
+  }, [activeBatch.players, pairSearch]);
 
   const liveCourts = useMemo(
     () => activeBatch.courts.filter((court) => court.status === 'live'),
@@ -481,13 +476,17 @@ function readPersistedBatchUiSettings() {
     seenLiveCourtSignatureByIdRef.current = currentLiveCourtSignatureById;
 
     if (newAnnouncements.length > 0) {
-      setNowCallingQueue((current) => {
-        const firstNextUpIndex = current.findIndex((entry) => entry.type === 'next-up');
-        if (firstNextUpIndex === -1) {
-          return [...current, ...newAnnouncements];
-        }
-        return [...current.slice(0, firstNextUpIndex), ...newAnnouncements, ...current.slice(firstNextUpIndex)];
+      const rafId = window.requestAnimationFrame(() => {
+        setNowCallingQueue((current) => {
+          const firstNextUpIndex = current.findIndex((entry) => entry.type === 'next-up');
+          if (firstNextUpIndex === -1) {
+            return [...current, ...newAnnouncements];
+          }
+          return [...current.slice(0, firstNextUpIndex), ...newAnnouncements, ...current.slice(firstNextUpIndex)];
+        });
       });
+
+      return () => window.cancelAnimationFrame(rafId);
     }
   }, [activeBatch.courts, isReady, publicView]);
 
@@ -537,9 +536,11 @@ function readPersistedBatchUiSettings() {
 
   useEffect(() => {
     if (!publicView) {
-      setActiveNowCallingAnnouncement(null);
-      setNowCallingQueue([]);
-      return;
+      const rafId = window.requestAnimationFrame(() => {
+        setActiveNowCallingAnnouncement(null);
+        setNowCallingQueue([]);
+      });
+      return () => window.cancelAnimationFrame(rafId);
     }
 
     if (activeNowCallingAnnouncement || nowCallingQueue.length === 0) {
@@ -547,8 +548,12 @@ function readPersistedBatchUiSettings() {
     }
 
     const [nextAnnouncement, ...remaining] = nowCallingQueue;
-    setActiveNowCallingAnnouncement(nextAnnouncement);
-    setNowCallingQueue(remaining);
+    const rafId = window.requestAnimationFrame(() => {
+      setActiveNowCallingAnnouncement(nextAnnouncement);
+      setNowCallingQueue(remaining);
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
   }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
 
   useEffect(() => {
@@ -587,7 +592,7 @@ function readPersistedBatchUiSettings() {
   }, [activeBatch.batchId, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
 
   useEffect(() => {
-    if (publicView || scoreOnly || !autoFillEnabled) {
+    if (publicView || scoreOnly || !autoFillEnabled || queuePaused) {
       return;
     }
 
@@ -605,7 +610,7 @@ function readPersistedBatchUiSettings() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeBatch.batchId, autoFillEnabled, publicView, scoreOnly]);
+  }, [activeBatch.batchId, autoFillEnabled, publicView, queuePaused, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -646,7 +651,7 @@ function readPersistedBatchUiSettings() {
   };
 
   const handleToggleBreak = (playerId: string) => {
-    const now = Date.now();
+    const now = nowMs;
     const disabledUntil = toggleBreakDisabledUntil[playerId] ?? 0;
     if (disabledUntil > now) {
       return;
@@ -743,7 +748,7 @@ function readPersistedBatchUiSettings() {
 
   const togglePairSelection = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
-    if (!player || player.pairId) {
+    if (!player || player.pairId || player.status !== 'checked-in' || activePlayers.has(player.id)) {
       return;
     }
 
@@ -1403,23 +1408,35 @@ function readPersistedBatchUiSettings() {
 
             <div className="mt-3 space-y-2 max-h-48 overflow-auto pr-1">
               {pairSearch.trim() !== '' && pairSearchResults.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300/80">No matching checked-in players.</div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300/80">No matching players.</div>
               ) : null}
               {pairSearchResults.map((player) => {
                 const selected = pairSelection.includes(player.id);
+                const isPlaying = activePlayers.has(player.id);
+                const canPair = player.status === 'checked-in' && !player.pairId && !isPlaying;
+                const availabilityLabel = player.pairId
+                  ? 'Already paired'
+                  : isPlaying
+                    ? 'Currently playing'
+                    : player.status !== 'checked-in'
+                      ? 'On break'
+                      : 'Available';
                 return (
                   <button
                     key={player.id}
                     type="button"
                     onClick={() => togglePairSelection(player.id)}
+                    disabled={!canPair}
                     className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
                       selected
                         ? 'border-amber-300/50 bg-amber-300/15 text-amber-100'
-                        : 'border-white/10 bg-white/5 text-slate-100/90'
+                        : canPair
+                          ? 'border-white/10 bg-white/5 text-slate-100/90'
+                          : 'border-white/10 bg-black/20 text-slate-300/70'
                     }`}
                   >
                     <PlayerNameRow name={player.name} gender={player.gender} />
-                    <div className="text-xs opacity-80">{player.gender}</div>
+                    <div className="text-xs opacity-80">{player.gender} - {availabilityLabel}</div>
                   </button>
                 );
               })}
@@ -1503,6 +1520,7 @@ function readPersistedBatchUiSettings() {
                 <button
                   type="button"
                   onClick={handleGenerateOneQueue}
+                  disabled={queuePaused}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
                   Generate 1 Queue
@@ -1510,6 +1528,7 @@ function readPersistedBatchUiSettings() {
                 <button
                   type="button"
                   onClick={() => fillIdleCourts(activeBatch.batchId)}
+                  disabled={queuePaused}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
                   Auto-fill courts
@@ -1730,7 +1749,7 @@ function readPersistedBatchUiSettings() {
                     <button
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
-                      disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
+                      disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > nowMs}
                       className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
                     >
                       Check In
@@ -1749,7 +1768,7 @@ function readPersistedBatchUiSettings() {
                     <button
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
-                      disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
+                      disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > nowMs}
                       className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
                     >
                       Break
@@ -1835,7 +1854,7 @@ function readPersistedBatchUiSettings() {
                           <button
                             type="button"
                             onClick={() => handleToggleBreak(player.id)}
-                            disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
+                            disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > nowMs}
                             className="relative z-10 touch-manipulation rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {player.status === 'break' ? 'Return' : 'Break'}

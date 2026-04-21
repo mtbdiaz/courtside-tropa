@@ -169,17 +169,6 @@ function getBatchIdFromName(name: string): BatchId | null {
   return matched[1] === '1' ? 1 : 2;
 }
 
-function modeFromPlayers(genders: Gender[]): MatchMode {
-  if (genders.length !== 4) {
-    return 'custom';
-  }
-
-  const males = genders.filter((value) => value === 'M').length;
-  const females = genders.filter((value) => value === 'F').length;
-
-  return males === 2 && females === 2 ? 'mixed' : 'custom';
-}
-
 function buildPairs(players: Player[]): Pair[] {
   const map = new Map(players.map((player) => [player.id, player]));
   const seen = new Set<string>();
@@ -353,17 +342,39 @@ function chooseFairReadyMatch(
 }
 
 function matchTypeFromTeams(
-  batch: BatchSnapshot,
+  _batch: BatchSnapshot,
   teams: { teamA: [string, string]; teamB: [string, string] },
 ): 'mixed' | 'custom' {
-  const playerMap = new Map(batch.players.map((player) => [player.id, player]));
-  const genders = [...teams.teamA, ...teams.teamB].map((id) => playerMap.get(id)?.gender).filter(Boolean) as Gender[];
-  const maleCount = genders.filter((gender) => gender === 'M').length;
-  const femaleCount = genders.filter((gender) => gender === 'F').length;
-  return maleCount === 2 && femaleCount === 2 ? 'mixed' : 'custom';
+  void teams;
+  // Auto-generated queue matches are always treated as regular (non-custom).
+  return 'mixed';
 }
 
-function chooseReadyMatchWithLockedPair(
+function toPairKey(a: string, b: string) {
+  return [a, b].sort().join('|');
+}
+
+function toTeamKey(team: [string, string]) {
+  return toPairKey(team[0], team[1]);
+}
+
+function toMatchupKey(teamA: [string, string], teamB: [string, string]) {
+  return [toTeamKey(teamA), toTeamKey(teamB)].sort().join('::');
+}
+
+function getRecentCompletedMatches(batch: BatchSnapshot, limit: number) {
+  return [...batch.history]
+    .filter((entry) => entry.status === 'complete' && entry.playerIds.length === 4)
+    .sort((a, b) => (b.endedAt ?? b.startedAt).localeCompare(a.endedAt ?? a.startedAt))
+    .slice(0, limit);
+}
+
+function isLockedPairTeam(team: [string, string], pairMateByPlayerId: Map<string, string>) {
+  return pairMateByPlayerId.get(team[0]) === team[1] && pairMateByPlayerId.get(team[1]) === team[0];
+}
+
+function chooseReadyMatchWithPairRules(
+  batch: BatchSnapshot,
   availablePlayers: Player[],
   stats: ReturnType<typeof getPlayerStats>,
   pairMateByPlayerId: Map<string, string>,
@@ -373,45 +384,72 @@ function chooseReadyMatchWithLockedPair(
   }
 
   const availableById = new Map(availablePlayers.map((player) => [player.id, player]));
-  const pairCandidates: Array<[string, string]> = [];
-  const seen = new Set<string>();
+  const lockedPairs: Array<[string, string]> = [];
+  const seenPairKeys = new Set<string>();
 
-  for (const player of availablePlayers) {
-    const mateId = pairMateByPlayerId.get(player.id);
-    if (!mateId || !availableById.has(mateId)) {
+  for (const pair of batch.pairs) {
+    const [firstId, secondId] = pair.playerIds;
+    if (!availableById.has(firstId) || !availableById.has(secondId)) {
       continue;
     }
 
-    const ids = [player.id, mateId].sort();
-    const key = ids.join('-');
-    if (seen.has(key)) {
+    const key = toPairKey(firstId, secondId);
+    if (seenPairKeys.has(key)) {
       continue;
     }
 
-    seen.add(key);
-    pairCandidates.push([ids[0], ids[1]]);
+    seenPairKeys.add(key);
+    const ids = [firstId, secondId].sort() as [string, string];
+    lockedPairs.push(ids);
   }
 
-  if (pairCandidates.length === 0) {
-    return null;
+  const soloPlayers = availablePlayers.filter((player) => !pairMateByPlayerId.has(player.id));
+  const recentMatches = getRecentCompletedMatches(batch, 5);
+  const recentMatchupKeys = new Set<string>();
+  for (const entry of recentMatches) {
+    const teamA = [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string];
+    const teamB = [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string];
+    recentMatchupKeys.add(toMatchupKey(teamA, teamB));
   }
 
-  pairCandidates.sort((a, b) => {
-    const aScore = (stats.get(a[0])?.gamesPlayed ?? 0) + (stats.get(a[1])?.gamesPlayed ?? 0);
-    const bScore = (stats.get(b[0])?.gamesPlayed ?? 0) + (stats.get(b[1])?.gamesPlayed ?? 0);
-    if (aScore !== bScore) {
-      return aScore - bScore;
+  const lastMatchPlayerIds = new Set<string>(recentMatches[0]?.playerIds ?? []);
+  const recentSoloTeammates = new Set<string>();
+  for (const entry of recentMatches.slice(0, 3)) {
+    const teamA = [entry.playerIds[0], entry.playerIds[1]] as [string, string];
+    const teamB = [entry.playerIds[2], entry.playerIds[3]] as [string, string];
+    if (!isLockedPairTeam(teamA, pairMateByPlayerId)) {
+      recentSoloTeammates.add(toPairKey(teamA[0], teamA[1]));
+    }
+    if (!isLockedPairTeam(teamB, pairMateByPlayerId)) {
+      recentSoloTeammates.add(toPairKey(teamB[0], teamB[1]));
+    }
+  }
+
+  const candidateTeams: Array<{ teamA: [string, string]; teamB: [string, string] }> = [];
+
+  if (lockedPairs.length >= 2) {
+    for (let i = 0; i < lockedPairs.length - 1; i += 1) {
+      for (let j = i + 1; j < lockedPairs.length; j += 1) {
+        candidateTeams.push({ teamA: lockedPairs[i], teamB: lockedPairs[j] });
+      }
+    }
+  } else if (lockedPairs.length === 1) {
+    const fixedPair = lockedPairs[0];
+    if (soloPlayers.length < 2) {
+      return null;
+    }
+    for (let i = 0; i < soloPlayers.length - 1; i += 1) {
+      for (let j = i + 1; j < soloPlayers.length; j += 1) {
+        const duo = [soloPlayers[i].id, soloPlayers[j].id].sort() as [string, string];
+        candidateTeams.push({ teamA: fixedPair, teamB: duo });
+      }
+    }
+  } else {
+    if (soloPlayers.length < 4) {
+      return null;
     }
 
-    const aCreated = (availableById.get(a[0])?.createdAt ?? '').localeCompare(availableById.get(a[1])?.createdAt ?? '');
-    const bCreated = (availableById.get(b[0])?.createdAt ?? '').localeCompare(availableById.get(b[1])?.createdAt ?? '');
-    return aCreated - bCreated;
-  });
-
-  const selectedPair = pairCandidates[0];
-  const opponents = availablePlayers
-    .filter((player) => player.id !== selectedPair[0] && player.id !== selectedPair[1])
-    .sort((a, b) => {
+    const ranked = [...soloPlayers].sort((a, b) => {
       const gameDiff = (stats.get(a.id)?.gamesPlayed ?? 0) - (stats.get(b.id)?.gamesPlayed ?? 0);
       if (gameDiff !== 0) {
         return gameDiff;
@@ -419,14 +457,92 @@ function chooseReadyMatchWithLockedPair(
       return a.createdAt.localeCompare(b.createdAt);
     });
 
-  if (opponents.length < 2) {
+    const pool = ranked.slice(0, Math.min(16, ranked.length));
+    for (let i = 0; i < pool.length - 3; i += 1) {
+      for (let j = i + 1; j < pool.length - 2; j += 1) {
+        for (let k = j + 1; k < pool.length - 1; k += 1) {
+          for (let l = k + 1; l < pool.length; l += 1) {
+            const ids = [pool[i].id, pool[j].id, pool[k].id, pool[l].id] as [string, string, string, string];
+            for (const [teamA, teamB] of generateTeamings(ids)) {
+              candidateTeams.push({
+                teamA: [teamA[0], teamA[1]].sort() as [string, string],
+                teamB: [teamB[0], teamB[1]].sort() as [string, string],
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (candidateTeams.length === 0) {
     return null;
   }
 
-  return {
-    teamA: [selectedPair[0], selectedPair[1]],
-    teamB: [opponents[0].id, opponents[1].id],
+  const evaluate = (
+    candidate: { teamA: [string, string]; teamB: [string, string] },
+    strict: boolean,
+  ) => {
+    const playerIds = [...candidate.teamA, ...candidate.teamB];
+    if (new Set(playerIds).size !== 4) {
+      return null;
+    }
+
+    const teamAIsLockedPair = isLockedPairTeam(candidate.teamA, pairMateByPlayerId);
+    const teamBIsLockedPair = isLockedPairTeam(candidate.teamB, pairMateByPlayerId);
+    const hasRecentSoloTeammateRepeat =
+      (!teamAIsLockedPair && recentSoloTeammates.has(toPairKey(candidate.teamA[0], candidate.teamA[1]))) ||
+      (!teamBIsLockedPair && recentSoloTeammates.has(toPairKey(candidate.teamB[0], candidate.teamB[1])));
+    const hasRecentMatchupRepeat = recentMatchupKeys.has(toMatchupKey(candidate.teamA, candidate.teamB));
+    const hasBackToBackPlayer = playerIds.some((id) => lastMatchPlayerIds.has(id));
+
+    if (strict && (hasRecentMatchupRepeat || hasRecentSoloTeammateRepeat || hasBackToBackPlayer)) {
+      return null;
+    }
+
+    const teamAGames = ((stats.get(candidate.teamA[0])?.gamesPlayed ?? 0) + (stats.get(candidate.teamA[1])?.gamesPlayed ?? 0)) / 2;
+    const teamBGames = ((stats.get(candidate.teamB[0])?.gamesPlayed ?? 0) + (stats.get(candidate.teamB[1])?.gamesPlayed ?? 0)) / 2;
+    const priorityScore = teamAGames + teamBGames;
+    const balancePenalty = Math.abs(teamAGames - teamBGames);
+
+    const fallbackPenalty =
+      Number(hasRecentMatchupRepeat) * 220 +
+      Number(hasRecentSoloTeammateRepeat) * 80 +
+      Number(hasBackToBackPlayer) * 260;
+
+    return {
+      score: priorityScore * 100 + balancePenalty * 35 + fallbackPenalty,
+      candidate,
+    };
   };
+
+  let bestStrict: { score: number; candidate: { teamA: [string, string]; teamB: [string, string] } } | null = null;
+  for (const candidate of candidateTeams) {
+    const scored = evaluate(candidate, true);
+    if (!scored) {
+      continue;
+    }
+    if (!bestStrict || scored.score < bestStrict.score) {
+      bestStrict = scored;
+    }
+  }
+
+  if (bestStrict) {
+    return bestStrict.candidate;
+  }
+
+  let bestFallback: { score: number; candidate: { teamA: [string, string]; teamB: [string, string] } } | null = null;
+  for (const candidate of candidateTeams) {
+    const scored = evaluate(candidate, false);
+    if (!scored) {
+      continue;
+    }
+    if (!bestFallback || scored.score < bestFallback.score) {
+      bestFallback = scored;
+    }
+  }
+
+  return bestFallback?.candidate ?? null;
 }
 
 function normalizeSnapshot(input: {
@@ -562,7 +678,7 @@ function normalizeSnapshot(input: {
         status: liveMatch || fallbackLive ? ('live' as const) : ('idle' as const),
         matchId: liveMatch?.id ?? court.current_match_id,
         mode: liveMatch
-          ? (liveMatch.match_type ?? modeFromPlayers(ids.map((id) => playersById.get(id)?.gender ?? 'M')))
+          ? (liveMatch.match_type ?? 'mixed')
           : null,
         startedAt: liveMatch?.start_time ?? court.start_time,
         sourceUnitIds: ids,
@@ -581,7 +697,7 @@ function normalizeSnapshot(input: {
       batchId: input.batchId,
       courtId: match.court_id ?? '',
       courtLabel: `Court ${input.courts.find((court) => court.id === match.court_id)?.court_number ?? '-'}`,
-      mode: (match.match_type ?? modeFromPlayers(allIds.map((id) => playersById.get(id)?.gender ?? 'M'))),
+      mode: (match.match_type ?? 'mixed'),
       sourceUnitIds: allIds,
       playerIds: allIds,
       teamA: [match.team1_player1_id, match.team1_player2_id].filter(Boolean).map((id) => playersById.get(id!)?.name ?? 'Unknown'),
@@ -614,7 +730,7 @@ function normalizeSnapshot(input: {
         batchId: input.batchId,
         courtId: match.court_id ?? '',
         courtLabel: `Court ${matchHistory?.court_number ?? input.courts.find((court) => court.id === match.court_id)?.court_number ?? '-'}`,
-        mode: (match.match_type ?? modeFromPlayers(allIds.map((id) => playersById.get(id)?.gender ?? 'M'))),
+        mode: (match.match_type ?? 'mixed'),
         sourceUnitIds: allIds,
         playerIds: allIds,
         teamA: [match.team1_player1_id, match.team1_player2_id].filter(Boolean).map((id) => playersById.get(id!)?.name ?? 'Unknown'),
@@ -1271,6 +1387,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
+    const dbBatchId = withBatchDbId(batchId);
+    if (!dbBatchId) {
+      return;
+    }
+
     const batch = snapshot.batches[batchId];
     const player = batch.players.find((entry) => entry.id === playerId);
     if (!player) {
@@ -1324,7 +1445,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         const breakIds = pendingEntries.filter(([, status]) => status === 'break').map(([id]) => id);
 
         if (checkedInIds.length > 0) {
-          const { error } = await supabase.from('players').update({ status: 'checked-in' }).in('id', checkedInIds);
+          const { error } = await supabase
+            .from('players')
+            .update({ status: 'checked-in' })
+            .in('id', checkedInIds)
+            .eq('batch_id', dbBatchId);
           if (error) {
             reportActionError(`Player sync failed: ${error.message}`);
             await loadFromDatabase();
@@ -1333,7 +1458,11 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         }
 
         if (breakIds.length > 0) {
-          const { error } = await supabase.from('players').update({ status: 'break' }).in('id', breakIds);
+          const { error } = await supabase
+            .from('players')
+            .update({ status: 'break' })
+            .in('id', breakIds)
+            .eq('batch_id', dbBatchId);
           if (error) {
             reportActionError(`Player sync failed: ${error.message}`);
             await loadFromDatabase();
@@ -1346,7 +1475,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       void flush();
     }, 180);
-  }, [loadFromDatabase, reportActionError, snapshot.batches]);
+  }, [loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const lockSelectedPair = useCallback(async (batchId: BatchId, firstPlayerId: string, secondPlayerId: string) => {
     const supabase = supabaseRef.current;
@@ -1385,8 +1514,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [loadFromDatabase, withBatchDbId]);
 
   const unlockSelectedPair = useCallback(async (batchId: BatchId, pairId: string) => {
+    clearActionError();
     const supabase = supabaseRef.current;
-    if (!supabase) {
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
       return;
     }
 
@@ -1397,9 +1528,56 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    await supabase.from('players').update({ pair_id: null }).in('id', ids);
+    const liveIds = new Set(
+      batch.courts
+        .filter((court) => court.status === 'live')
+        .flatMap((court) => court.sourceUnitIds),
+    );
+    if (ids.some((id) => liveIds.has(id))) {
+      reportActionError('Unpair blocked: one or both players are currently playing. Unpair after the match ends.');
+      return;
+    }
+
+    const { data: queuedRows } = await supabase
+      .from('matches')
+      .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id')
+      .eq('batch_id', dbBatchId)
+      .in('status', ['queued', 'active'])
+      .is('court_id', null);
+
+    const affectedMatchIds = (queuedRows ?? [])
+      .filter((row) => {
+        const participants = matchPlayerIds(row);
+        return participants.some((id) => ids.includes(id));
+      })
+      .map((row) => row.id);
+
+    const base = Date.now();
+    await Promise.all(
+      ids.map((id, index) =>
+        supabase
+          .from('players')
+          .update({
+            pair_id: null,
+            status: 'checked-in',
+            created_at: new Date(base + index * 1000).toISOString(),
+          })
+          .eq('id', id)
+          .eq('batch_id', dbBatchId),
+      ),
+    );
+
+    if (affectedMatchIds.length > 0) {
+      await supabase
+        .from('matches')
+        .delete()
+        .eq('batch_id', dbBatchId)
+        .in('id', affectedMatchIds)
+        .is('court_id', null);
+    }
+
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const ensureReadyMatches = useCallback(async (batchId: BatchId, targetReadyMatches = 6) => {
     clearActionError();
@@ -1486,7 +1664,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     const base = Date.now();
 
     for (let index = 0; index < needed; index += 1) {
-      const next = chooseReadyMatchWithLockedPair(available, stats, pairMateByPlayerId) ?? chooseFairReadyMatch(available, stats);
+      const next = chooseReadyMatchWithPairRules(batch, available, stats, pairMateByPlayerId);
       if (!next) {
         break;
       }
@@ -1624,16 +1802,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     if (playerIds.length > 0) {
       const base = Date.now() - playerIds.length * 1000;
-      for (let i = 0; i < playerIds.length; i += 1) {
-        await supabase
-          .from('players')
-          .update({
-            created_at: new Date(base + i * 1000).toISOString(),
-            status: 'checked-in',
-          })
-          .eq('id', playerIds[i])
-          .eq('batch_id', dbBatchId);
-      }
+      await Promise.all(
+        playerIds.map((id, i) =>
+          supabase
+            .from('players')
+            .update({
+              created_at: new Date(base + i * 1000).toISOString(),
+              status: 'checked-in',
+            })
+            .eq('id', id)
+            .eq('batch_id', dbBatchId),
+        ),
+      );
     }
 
     const historyMatchColumn = historyMatchIdColumnRef.current;
