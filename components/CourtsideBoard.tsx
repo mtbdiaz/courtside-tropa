@@ -126,6 +126,12 @@ const BATCH_UI_SETTINGS_STORAGE_KEY = 'courtside:batch-ui-settings:v1';
 const DEFAULT_QUEUE_PAUSED_BY_BATCH: Record<BatchId, boolean> = { 1: false, 2: false };
 const DEFAULT_AUTOFILL_ENABLED_BY_BATCH: Record<BatchId, boolean> = { 1: false, 2: false };
 
+function hasCompleteTeams(teamA: string[], teamB: string[]) {
+  const hasValidNames = (team: string[]) =>
+    team.length > 0 && team.every((name) => typeof name === 'string' && name.trim().length > 0);
+  return hasValidNames(teamA) && hasValidNames(teamB);
+}
+
 function normalizeBooleanRecord(value: unknown, fallback: Record<BatchId, boolean>): Record<BatchId, boolean> {
   if (!value || typeof value !== 'object') {
     return fallback;
@@ -236,10 +242,15 @@ function readPersistedBatchUiSettings() {
   const [nowCallingQueue, setNowCallingQueue] = useState<NowCallingAnnouncement[]>([]);
   const [activeNowCallingAnnouncement, setActiveNowCallingAnnouncement] = useState<NowCallingAnnouncement | null>(null);
   const autoFillRunningRef = useRef(false);
+  const fillIdleCourtsRef = useRef(fillIdleCourts);
   const seenLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
   const liveCourtTrackerInitializedRef = useRef(false);
   const previousNowCallingMatchIdRef = useRef<string | null>(null);
   const nowCallingMatchTrackerInitializedRef = useRef(false);
+
+  useEffect(() => {
+    fillIdleCourtsRef.current = fillIdleCourts;
+  }, [fillIdleCourts]);
 
   useEffect(() => {
     try {
@@ -413,6 +424,10 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
+    if (!isReady) {
+      return;
+    }
+
     const currentLiveCourtSignatureById: Record<string, string> = {};
     for (const court of activeBatch.courts) {
       if (court.status !== 'live') {
@@ -436,6 +451,9 @@ function readPersistedBatchUiSettings() {
       const nextSignature = currentLiveCourtSignatureById[court.id];
       const previousSignature = seenLiveCourtSignatureByIdRef.current[court.id];
       if (nextSignature !== previousSignature) {
+        if (!hasCompleteTeams(court.teamA, court.teamB)) {
+          continue;
+        }
         newAnnouncements.push({
           id: `court-assigned-${court.id}-${Date.now()}-${newAnnouncements.length}`,
           type: 'court-assigned',
@@ -457,12 +475,16 @@ function readPersistedBatchUiSettings() {
         return [...current.slice(0, firstNextUpIndex), ...newAnnouncements, ...current.slice(firstNextUpIndex)];
       });
     }
-  }, [activeBatch.courts, publicView]);
+  }, [activeBatch.courts, isReady, publicView]);
 
   useEffect(() => {
     if (!publicView) {
       nowCallingMatchTrackerInitializedRef.current = false;
       previousNowCallingMatchIdRef.current = null;
+      return;
+    }
+
+    if (!isReady) {
       return;
     }
 
@@ -476,7 +498,13 @@ function readPersistedBatchUiSettings() {
     }
 
     const previousMatchId = previousNowCallingMatchIdRef.current;
-    if (nextMatch && nextMatchId && previousMatchId && nextMatchId !== previousMatchId) {
+    if (
+      nextMatch &&
+      nextMatchId &&
+      previousMatchId &&
+      nextMatchId !== previousMatchId &&
+      hasCompleteTeams(nextMatch.teamA, nextMatch.teamB)
+    ) {
       setNowCallingQueue((current) => [
         ...current,
         {
@@ -491,7 +519,7 @@ function readPersistedBatchUiSettings() {
     }
 
     previousNowCallingMatchIdRef.current = nextMatchId;
-  }, [publicView, upcomingMatches]);
+  }, [isReady, publicView, upcomingMatches]);
 
   useEffect(() => {
     if (!publicView) {
@@ -555,7 +583,7 @@ function readPersistedBatchUiSettings() {
       }
 
       autoFillRunningRef.current = true;
-      Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
+      Promise.resolve(fillIdleCourtsRef.current(activeBatch.batchId)).finally(() => {
         autoFillRunningRef.current = false;
       });
     }, 15000);
@@ -563,7 +591,7 @@ function readPersistedBatchUiSettings() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, publicView, scoreOnly]);
+  }, [activeBatch.batchId, autoFillEnabled, publicView, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
