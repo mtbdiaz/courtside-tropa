@@ -507,15 +507,22 @@ function readPersistedBatchUiSettings() {
     const [nextAnnouncement, ...remaining] = nowCallingQueue;
     setActiveNowCallingAnnouncement(nextAnnouncement);
     setNowCallingQueue(remaining);
+  }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
 
+  useEffect(() => {
+    if (!publicView || !activeNowCallingAnnouncement) {
+      return;
+    }
+
+    const activeAnnouncementId = activeNowCallingAnnouncement.id;
     const timeoutId = window.setTimeout(() => {
       setActiveNowCallingAnnouncement((current) =>
-        current?.id === nextAnnouncement.id ? null : current,
+        current?.id === activeAnnouncementId ? null : current,
       );
     }, 5000);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
+  }, [activeNowCallingAnnouncement, publicView]);
 
   const queuePaused = queuePausedByBatch[activeBatch.batchId];
   const autoFillEnabled = autoFillEnabledByBatch[activeBatch.batchId];
