@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BatchId } from '@/types/courtside';
+import { BatchId, Gender } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
 import { getLeaderboardEntries } from '@/lib/courtside-engine';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -59,15 +59,21 @@ function getInitials(name: string) {
     .join('');
 }
 
-function Avatar({ name, size = 'sm' }: { name: string; size?: 'sm' | 'md' | 'lg' }) {
+function Avatar({ name, size = 'sm', gender }: { name: string; size?: 'sm' | 'md' | 'lg'; gender?: Gender }) {
   const dimensionClass = size === 'lg' ? 'h-11 w-11 text-sm' : size === 'md' ? 'h-8 w-8 text-xs' : 'h-6 w-6 text-[10px]';
   const seed = hashString(name);
   const hue = seed % 360;
+  const background =
+    gender === 'M'
+      ? 'linear-gradient(135deg, hsl(211 90% 56%), hsl(220 80% 42%))'
+      : gender === 'F'
+        ? 'linear-gradient(135deg, hsl(328 86% 62%), hsl(339 78% 48%))'
+        : `linear-gradient(135deg, hsl(${hue} 82% 56%), hsl(${(hue + 34) % 360} 75% 44%))`;
 
   return (
     <span
       className={`inline-flex shrink-0 items-center justify-center rounded-full border border-white/15 font-bold text-white shadow-sm ${dimensionClass}`}
-      style={{ background: `linear-gradient(135deg, hsl(${hue} 82% 56%), hsl(${(hue + 34) % 360} 75% 44%))` }}
+      style={{ background }}
       aria-hidden="true"
     >
       {getInitials(name)}
@@ -75,23 +81,23 @@ function Avatar({ name, size = 'sm' }: { name: string; size?: 'sm' | 'md' | 'lg'
   );
 }
 
-function PlayerNameRow({ name, alignRight = false, size = 'sm', muted = false }: { name: string; alignRight?: boolean; size?: 'sm' | 'md' | 'lg'; muted?: boolean }) {
+function PlayerNameRow({ name, alignRight = false, size = 'sm', muted = false, gender }: { name: string; alignRight?: boolean; size?: 'sm' | 'md' | 'lg'; muted?: boolean; gender?: Gender }) {
   return (
     <div className={`flex items-center gap-2 ${alignRight ? 'justify-end' : 'justify-start'}`}>
-      {alignRight ? null : <Avatar name={name} size={size} />}
+      {alignRight ? null : <Avatar name={name} size={size} gender={gender} />}
       <span className={`${muted ? 'text-slate-200/85' : 'text-white'} ${size === 'lg' ? 'text-base font-semibold' : 'text-sm'}`}>
         {name}
       </span>
-      {alignRight ? <Avatar name={name} size={size} /> : null}
+      {alignRight ? <Avatar name={name} size={size} gender={gender} /> : null}
     </div>
   );
 }
 
-function TeamList({ players, alignRight = false, size = 'sm' }: { players: string[]; alignRight?: boolean; size?: 'sm' | 'md' | 'lg' }) {
+function TeamList({ players, alignRight = false, size = 'sm', getGender }: { players: string[]; alignRight?: boolean; size?: 'sm' | 'md' | 'lg'; getGender?: (name: string) => Gender | undefined }) {
   return (
     <div className={`space-y-2 ${alignRight ? 'text-right' : 'text-left'}`}>
       {players.map((player) => (
-        <PlayerNameRow key={player} name={player} alignRight={alignRight} size={size} />
+        <PlayerNameRow key={player} name={player} alignRight={alignRight} size={size} gender={getGender?.(player)} />
       ))}
     </div>
   );
@@ -101,7 +107,7 @@ type BoardMode = 'admin' | 'public' | 'score';
 
 const BATCH_UI_SETTINGS_STORAGE_KEY = 'courtside:batch-ui-settings:v1';
 const DEFAULT_QUEUE_PAUSED_BY_BATCH: Record<BatchId, boolean> = { 1: false, 2: false };
-const DEFAULT_AUTOFILL_ENABLED_BY_BATCH: Record<BatchId, boolean> = { 1: true, 2: true };
+const DEFAULT_AUTOFILL_ENABLED_BY_BATCH: Record<BatchId, boolean> = { 1: false, 2: false };
 
 function normalizeBooleanRecord(value: unknown, fallback: Record<BatchId, boolean>): Record<BatchId, boolean> {
   if (!value || typeof value !== 'object') {
@@ -282,6 +288,18 @@ function readPersistedBatchUiSettings() {
     [activeBatch.players],
   );
 
+  const playerGenderByName = useMemo(() => {
+    const map = new Map<string, Gender>();
+    for (const player of activeBatch.players) {
+      if (!map.has(player.name)) {
+        map.set(player.name, player.gender);
+      }
+    }
+    return map;
+  }, [activeBatch.players]);
+
+  const getGenderForName = (name: string) => playerGenderByName.get(name);
+
   const filteredPlayers = useMemo(() => {
     const query = playerSearch.trim().toLowerCase();
     if (!query) {
@@ -406,23 +424,21 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    if (autoFillRunningRef.current) {
-      return;
-    }
+    const intervalId = window.setInterval(() => {
+      if (autoFillRunningRef.current) {
+        return;
+      }
 
-    autoFillRunningRef.current = true;
-    Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
-      autoFillRunningRef.current = false;
-    });
-  }, [
-    activeBatch.batchId,
-    autoFillEnabled,
-    fillIdleCourts,
-    publicView,
-    scoreOnly,
-    activeBatch.courts,
-    activeBatch.queuedMatches,
-  ]);
+      autoFillRunningRef.current = true;
+      Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
+        autoFillRunningRef.current = false;
+      });
+    }, 15000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, publicView, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -628,7 +644,9 @@ function readPersistedBatchUiSettings() {
   }
 
   if (publicView) {
-    const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle');
+    const activeCourts = activeBatch.courts.filter((court) => court.isActive);
+    const inactiveCourtCount = activeBatch.courts.filter((court) => !court.isActive).length;
+    const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle' && court.isActive);
     const nextTwoMatches = upcomingMatches.slice(0, 2);
     const nextMatch = nextTwoMatches[0];
     const isHighlighting = Boolean(nextMatch && highlightedMatchId === nextMatch.id);
@@ -640,6 +658,14 @@ function readPersistedBatchUiSettings() {
             <div>
               <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">Public Queue</p>
               <h2 className="text-display mt-2 text-3xl font-semibold sm:text-4xl">Live Queue - Batch {activeBatch.batchId}</h2>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em]">
+                <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1 text-emerald-100">
+                  {activeCourts.length} active
+                </span>
+                <span className="rounded-full border border-slate-300/25 bg-slate-700/20 px-3 py-1 text-slate-200/90">
+                  {inactiveCourtCount} inactive
+                </span>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {[1, 2].map((batchId) => (
@@ -696,7 +722,7 @@ function readPersistedBatchUiSettings() {
                         <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
                           <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 1</div>
                           <div className="mt-2">
-                            <TeamList players={nextTwoMatches[0]?.teamA ?? []} size={isHighlighting ? 'lg' : 'sm'} />
+                            <TeamList players={nextTwoMatches[0]?.teamA ?? []} size={isHighlighting ? 'lg' : 'sm'} getGender={getGenderForName} />
                           </div>
                         </div>
 
@@ -705,16 +731,14 @@ function readPersistedBatchUiSettings() {
                         <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
                           <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 2</div>
                           <div className="mt-2">
-                            <TeamList players={nextTwoMatches[0]?.teamB ?? []} size={isHighlighting ? 'lg' : 'sm'} alignRight />
+                            <TeamList players={nextTwoMatches[0]?.teamB ?? []} size={isHighlighting ? 'lg' : 'sm'} alignRight getGender={getGenderForName} />
                           </div>
                         </div>
                       </div>
 
-                      {nextOpenCourt && (
-                        <div className={`mt-4 rounded-xl border border-emerald-300/40 bg-emerald-500/10 px-3 py-2 text-center font-bold text-emerald-100 ${isHighlighting ? 'text-sm uppercase tracking-[0.2em]' : 'text-xs'}`}>
-                          {isHighlighting ? nextOpenCourt.label : `→ ${nextOpenCourt.label}`}
-                        </div>
-                      )}
+                      <div className={`mt-4 rounded-xl border px-3 py-2 text-center font-bold ${nextOpenCourt ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-100' : 'border-slate-300/25 bg-slate-700/20 text-slate-200/90'} ${isHighlighting ? 'text-sm uppercase tracking-[0.2em]' : 'text-xs'}`}>
+                        {nextOpenCourt ? (isHighlighting ? nextOpenCourt.label : `Next active court: ${nextOpenCourt.label}`) : 'No active court available'}
+                      </div>
                     </motion.div>
 
                     <AnimatePresence mode="wait">
@@ -735,7 +759,7 @@ function readPersistedBatchUiSettings() {
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
                               <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 1</div>
                               <div className="mt-2">
-                                <TeamList players={nextTwoMatches[1]?.teamA ?? []} />
+                                <TeamList players={nextTwoMatches[1]?.teamA ?? []} getGender={getGenderForName} />
                               </div>
                             </div>
 
@@ -744,7 +768,7 @@ function readPersistedBatchUiSettings() {
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
                               <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 2</div>
                               <div className="mt-2">
-                                <TeamList players={nextTwoMatches[1]?.teamB ?? []} alignRight />
+                                <TeamList players={nextTwoMatches[1]?.teamB ?? []} alignRight getGender={getGenderForName} />
                               </div>
                             </div>
                           </div>
@@ -778,9 +802,9 @@ function readPersistedBatchUiSettings() {
                   </div>
 
                   <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                    <TeamCard label="Team 1" players={match.teamA} />
+                    <TeamCard label="Team 1" players={match.teamA} getGender={getGenderForName} />
                     <div className="text-center text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">VS</div>
-                    <TeamCard label="Team 2" players={match.teamB} alignRight />
+                    <TeamCard label="Team 2" players={match.teamB} alignRight getGender={getGenderForName} />
                   </div>
                 </div>
               ))}
@@ -814,9 +838,9 @@ function readPersistedBatchUiSettings() {
                   </div>
 
                   <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                    <TeamCard label="Team 1" players={court.teamA} />
+                    <TeamCard label="Team 1" players={court.teamA} getGender={getGenderForName} />
                     <div className="text-center text-xl font-black tracking-[0.45em] text-amber-200/80">VS</div>
-                    <TeamCard label="Team 2" players={court.teamB} alignRight />
+                    <TeamCard label="Team 2" players={court.teamB} alignRight getGender={getGenderForName} />
                   </div>
                 </div>
               ))}
@@ -845,7 +869,7 @@ function readPersistedBatchUiSettings() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-xs font-bold text-amber-100">{entry.rank}</span>
-                          <PlayerNameRow name={entry.name} size="md" />
+                          <PlayerNameRow name={entry.name} size="md" gender={getGenderForName(entry.name)} />
                         </div>
                         <div className="text-right text-xs text-slate-200/80">
                           <div>{entry.wins} wins</div>
@@ -867,7 +891,7 @@ function readPersistedBatchUiSettings() {
                   <div key={entry.playerId} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
                     <div className="flex items-center gap-3">
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-xs font-bold text-amber-100">{entry.rank}</span>
-                      <PlayerNameRow name={entry.name} />
+                      <PlayerNameRow name={entry.name} gender={getGenderForName(entry.name)} />
                     </div>
                     <span className="text-slate-300/80">{entry.wins} wins - {entry.gamesPlayed} games</span>
                   </div>
@@ -931,11 +955,11 @@ function readPersistedBatchUiSettings() {
                   </div>
                   <div className="mt-3 text-sm text-slate-200/90">
                     <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team A</div>
-                    <div className="mt-2"><TeamList players={court.teamA} /></div>
+                    <div className="mt-2"><TeamList players={court.teamA} getGender={getGenderForName} /></div>
                   </div>
                   <div className="mt-1 text-sm text-slate-200/90">
                     <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team B</div>
-                    <div className="mt-2"><TeamList players={court.teamB} alignRight /></div>
+                    <div className="mt-2"><TeamList players={court.teamB} alignRight getGender={getGenderForName} /></div>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <input
@@ -1178,7 +1202,7 @@ function readPersistedBatchUiSettings() {
                         : 'border-white/10 bg-white/5 text-slate-100/90'
                     }`}
                   >
-                    <PlayerNameRow name={player.name} />
+                    <PlayerNameRow name={player.name} gender={player.gender} />
                     <div className="text-xs opacity-80">{player.gender}</div>
                   </button>
                 );
@@ -1204,9 +1228,9 @@ function readPersistedBatchUiSettings() {
                   return (
                     <div key={pair.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
                       <div className="flex items-center gap-2">
-                        <PlayerNameRow name={firstName} />
+                        <PlayerNameRow name={firstName} gender={getGenderForName(firstName)} />
                         <span className="text-slate-300/70">+</span>
-                        <PlayerNameRow name={secondName} />
+                        <PlayerNameRow name={secondName} gender={getGenderForName(secondName)} />
                       </div>
                       <button type="button" onClick={() => unlockSelectedPair(activeBatch.batchId, pair.id)} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
                         Unpair
@@ -1257,7 +1281,7 @@ function readPersistedBatchUiSettings() {
                 >
                   <span className="inline-flex items-center gap-2">
                     {autoFillEnabled ? <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.75)]" /> : null}
-                    {autoFillEnabled ? 'Auto-fill: On' : 'Auto-fill: Off'}
+                    {autoFillEnabled ? 'Auto-fill 15s: On' : 'Auto-fill 15s: Off'}
                   </span>
                 </button>
                 <button
@@ -1294,9 +1318,9 @@ function readPersistedBatchUiSettings() {
                     </div>
                   </div>
                   <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                    <TeamCard label="Team 1" players={match.teamA} />
+                    <TeamCard label="Team 1" players={match.teamA} getGender={getGenderForName} />
                     <div className="text-center text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">VS</div>
-                    <TeamCard label="Team 2" players={match.teamB} alignRight />
+                    <TeamCard label="Team 2" players={match.teamB} alignRight getGender={getGenderForName} />
                   </div>
                   {idleCourts.length > 0 ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
@@ -1380,11 +1404,11 @@ function readPersistedBatchUiSettings() {
                       <>
                         <div className="mt-3 text-sm text-slate-200/90">
                           <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team A</div>
-                          <div className="mt-2"><TeamList players={court.teamA} /></div>
+                          <div className="mt-2"><TeamList players={court.teamA} getGender={getGenderForName} /></div>
                         </div>
                         <div className="mt-1 text-sm text-slate-200/90">
                           <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team B</div>
-                          <div className="mt-2"><TeamList players={court.teamB} alignRight /></div>
+                          <div className="mt-2"><TeamList players={court.teamB} alignRight getGender={getGenderForName} /></div>
                         </div>
                         <div className="mt-3 grid gap-2 sm:grid-cols-2">
                           <input
@@ -1481,7 +1505,7 @@ function readPersistedBatchUiSettings() {
                 {breakPlayers.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
                 {breakPlayers.map((player) => (
                   <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                      <PlayerNameRow name={player.name} />
+                      <PlayerNameRow name={player.name} gender={player.gender} />
                     <button
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
@@ -1500,7 +1524,7 @@ function readPersistedBatchUiSettings() {
               <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
                 {availableForCustom.map((player) => (
                   <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                      <PlayerNameRow name={player.name} />
+                      <PlayerNameRow name={player.name} gender={player.gender} />
                     <button
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
@@ -1583,7 +1607,7 @@ function readPersistedBatchUiSettings() {
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-slate-100/90">{player.gender}</div>
                         <div className="min-w-0 flex-1">
-                          <PlayerNameRow name={player.name} />
+                          <PlayerNameRow name={player.name} gender={player.gender} />
                           <div className="text-xs text-slate-300/80">{player.status}</div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1642,7 +1666,7 @@ function readPersistedBatchUiSettings() {
                     className="rounded-full border border-amber-300/40 bg-amber-300/15 px-3 py-1 text-xs text-amber-100"
                   >
                     <span className="inline-flex items-center gap-2">
-                      <Avatar name={player.name} />
+                      <Avatar name={player.name} gender={player.gender} />
                       <span>{player.name}</span>
                       <span>x</span>
                     </span>
@@ -1669,7 +1693,7 @@ function readPersistedBatchUiSettings() {
                         : 'border-white/10 bg-white/5 text-slate-100/90'
                     }`}
                   >
-                    <PlayerNameRow name={player.name} />
+                    <PlayerNameRow name={player.name} gender={player.gender} />
                     <div className="text-xs opacity-80">{player.gender}</div>
                   </button>
                 );
@@ -1801,12 +1825,12 @@ function readPersistedBatchUiSettings() {
   );
 }
 
-function TeamCard({ label, players, alignRight = false }: { label: string; players: string[]; alignRight?: boolean }) {
+function TeamCard({ label, players, alignRight = false, getGender }: { label: string; players: string[]; alignRight?: boolean; getGender?: (name: string) => Gender | undefined }) {
   return (
     <div className={`rounded-2xl border border-white/10 bg-black/20 p-3 ${alignRight ? 'text-right' : 'text-left'}`}>
       <div className="text-[11px] uppercase tracking-[0.28em] text-slate-400/80">{label}</div>
       <div className="mt-2">
-        <TeamList players={players} alignRight={alignRight} />
+        <TeamList players={players} alignRight={alignRight} getGender={getGender} />
       </div>
     </div>
   );
