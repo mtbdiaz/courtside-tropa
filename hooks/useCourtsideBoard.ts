@@ -629,6 +629,42 @@ function normalizeSnapshot(input: {
       };
     });
 
+  const completedMatchIds = new Set(completedHistory.map((match) => match.id));
+  const historyOnlyCompleted = input.histories
+    .filter((row) => {
+      const id = historyMatchId(row);
+      return !id || !completedMatchIds.has(id);
+    })
+    .map((row) => {
+      const fallbackId = historyMatchId(row) ?? `history-${row.id}`;
+      const teamA = [row.team1_player1_name, row.team1_player2_name].filter(
+        (name): name is string => Boolean(name && name.trim()),
+      );
+      const teamB = [row.team2_player1_name, row.team2_player2_name].filter(
+        (name): name is string => Boolean(name && name.trim()),
+      );
+      const winner = winnerToAB(row.winner_team);
+
+      return {
+        id: fallbackId,
+        batchId: input.batchId,
+        courtId: '',
+        courtLabel: `Court ${row.court_number ?? '-'}`,
+        mode: input.activeMode,
+        sourceUnitIds: [],
+        playerIds: [],
+        teamA,
+        teamB,
+        scoreA: row.score_team1,
+        scoreB: row.score_team2,
+        winner,
+        status: 'complete' as const,
+        startedAt: row.played_at ?? nowIso(),
+        endedAt: row.played_at ?? nowIso(),
+        notes: row.notes ?? undefined,
+      };
+    });
+
   return {
     ...createEmptyBatchSnapshot(input.batchId),
     batchId: input.batchId,
@@ -642,7 +678,7 @@ function normalizeSnapshot(input: {
       .map((match, index) => toMatchPreview(match, playersById, index))
       .filter(Boolean) as MatchPreview[],
     courts,
-    history: [...liveHistory, ...completedHistory],
+    history: [...liveHistory, ...completedHistory, ...historyOnlyCompleted],
     lastUpdated: nowIso(),
   };
 }

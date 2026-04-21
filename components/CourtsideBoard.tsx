@@ -132,6 +132,20 @@ function hasCompleteTeams(teamA: string[], teamB: string[]) {
   return hasValidNames(teamA) && hasValidNames(teamB);
 }
 
+function parseScoreValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed)) {
+    return null;
+  }
+
+  return parsed;
+}
+
 function normalizeBooleanRecord(value: unknown, fallback: Record<BatchId, boolean>): Record<BatchId, boolean> {
   if (!value || typeof value !== 'object') {
     return fallback;
@@ -1125,7 +1139,7 @@ function readPersistedBatchUiSettings() {
                   Batch {batchId}
                 </button>
               ))}
-              <Link href="/dashboard" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
+              <Link href="/dashboard" className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
                 Back to dashboard
               </Link>
             </div>
@@ -1161,6 +1175,8 @@ function readPersistedBatchUiSettings() {
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <input
                       type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       min="0"
                       value={draft.a}
                       onChange={(event) =>
@@ -1174,6 +1190,8 @@ function readPersistedBatchUiSettings() {
                     />
                     <input
                       type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       min="0"
                       value={draft.b}
                       onChange={(event) =>
@@ -1187,10 +1205,11 @@ function readPersistedBatchUiSettings() {
                     />
                     <button
                       type="button"
+                      disabled={parseScoreValue(draft.a) === null || parseScoreValue(draft.b) === null}
                       onClick={() => {
-                        const scoreA = Number(draft.a);
-                        const scoreB = Number(draft.b);
-                        if (Number.isNaN(scoreA) || Number.isNaN(scoreB)) {
+                        const scoreA = parseScoreValue(draft.a);
+                        const scoreB = parseScoreValue(draft.b);
+                        if (scoreA === null || scoreB === null) {
                           return;
                         }
                         completeMatch(activeBatch.batchId, court.id, scoreA, scoreB);
@@ -1200,7 +1219,7 @@ function readPersistedBatchUiSettings() {
                           return next;
                         });
                       }}
-                      className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 sm:col-span-2"
+                      className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60 sm:col-span-2"
                     >
                       Save score
                     </button>
@@ -1237,10 +1256,10 @@ function readPersistedBatchUiSettings() {
                 Batch {batchId}
               </button>
             ))}
-            <Link href="/dashboard/score" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
+            <Link href="/dashboard/score" className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
               Score Game
             </Link>
-            <Link href="/dashboard/history" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
+            <Link href="/dashboard/history" className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
               Match history
             </Link>
             <button
@@ -1610,6 +1629,8 @@ function readPersistedBatchUiSettings() {
                         <div className="mt-3 grid gap-2 sm:grid-cols-2">
                           <input
                             type="number"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
                             min="0"
                             value={draft.a}
                             onChange={(event) =>
@@ -1623,6 +1644,8 @@ function readPersistedBatchUiSettings() {
                           />
                           <input
                             type="number"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
                             min="0"
                             value={draft.b}
                             onChange={(event) =>
@@ -1636,10 +1659,11 @@ function readPersistedBatchUiSettings() {
                           />
                           <button
                             type="button"
+                            disabled={parseScoreValue(draft.a) === null || parseScoreValue(draft.b) === null}
                             onClick={() => {
-                              const scoreA = Number(draft.a);
-                              const scoreB = Number(draft.b);
-                              if (Number.isNaN(scoreA) || Number.isNaN(scoreB)) {
+                              const scoreA = parseScoreValue(draft.a);
+                              const scoreB = parseScoreValue(draft.b);
+                              if (scoreA === null || scoreB === null) {
                                 return;
                               }
                               completeMatch(activeBatch.batchId, court.id, scoreA, scoreB);
@@ -1649,7 +1673,7 @@ function readPersistedBatchUiSettings() {
                                 return next;
                               });
                             }}
-                            className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 sm:col-span-2"
+                            className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60 sm:col-span-2"
                           >
                             Save
                           </button>
@@ -1707,7 +1731,7 @@ function readPersistedBatchUiSettings() {
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
                       disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
-                      className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
+                      className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
                     >
                       Check In
                     </button>
@@ -1726,7 +1750,7 @@ function readPersistedBatchUiSettings() {
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
                       disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
-                      className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
+                      className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
                     >
                       Break
                     </button>
@@ -1812,7 +1836,7 @@ function readPersistedBatchUiSettings() {
                             type="button"
                             onClick={() => handleToggleBreak(player.id)}
                             disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="relative z-10 touch-manipulation rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {player.status === 'break' ? 'Return' : 'Break'}
                           </button>

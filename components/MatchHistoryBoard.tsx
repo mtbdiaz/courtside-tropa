@@ -23,6 +23,7 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
   }
 
   const completed = activeBatch.history.filter((match) => match.status === 'complete');
+  const totalMatches = completed.length;
 
   const beginEdit = (matchId: string, currentA: number | null, currentB: number | null) => {
     setEditingMatchId(matchId);
@@ -35,9 +36,15 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
       return;
     }
 
-    const nextA = scoreA === '' ? null : Number(scoreA);
-    const nextB = scoreB === '' ? null : Number(scoreB);
-    if ((nextA !== null && Number.isNaN(nextA)) || (nextB !== null && Number.isNaN(nextB))) {
+    const trimmedA = scoreA.trim();
+    const trimmedB = scoreB.trim();
+    if (trimmedA === '' || trimmedB === '') {
+      return;
+    }
+
+    const nextA = Number(trimmedA);
+    const nextB = Number(trimmedB);
+    if (!Number.isFinite(nextA) || Number.isNaN(nextA) || !Number.isFinite(nextB) || Number.isNaN(nextB)) {
       return;
     }
 
@@ -70,11 +77,12 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
                 Batch {batchId}
               </button>
             ))}
-            <Link href="/dashboard" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90">
+            <Link href="/dashboard" className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90">
               Back to dashboard
             </Link>
           </div>
         </div>
+        <div className="mt-4 text-xs uppercase tracking-[0.2em] text-slate-300/80">Total matches: {totalMatches}</div>
       </section>
 
       <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
@@ -95,6 +103,8 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
                 <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center">
                   <input
                     type="number"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     min="0"
                     value={scoreA}
                     onChange={(event) => setScoreA(event.target.value)}
@@ -103,13 +113,15 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
                   />
                   <input
                     type="number"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     min="0"
                     value={scoreB}
                     onChange={(event) => setScoreB(event.target.value)}
                     placeholder="Score B"
                     className="glass-input rounded-2xl px-4 py-2"
                   />
-                  <button type="button" onClick={handleSave} className="rounded-2xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950">
+                  <button type="button" disabled={scoreA.trim() === '' || scoreB.trim() === '' || Number.isNaN(Number(scoreA)) || Number.isNaN(Number(scoreB))} onClick={handleSave} className="rounded-2xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
                     Update
                   </button>
                   <button type="button" onClick={() => setEditingMatchId(null)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-100/90">
