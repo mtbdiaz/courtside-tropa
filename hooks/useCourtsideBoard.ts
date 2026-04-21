@@ -297,15 +297,12 @@ function chooseFairReadyMatch(
 
   const pool = ranked.slice(0, Math.min(16, ranked.length));
   let best: { score: number; teamA: [string, string]; teamB: [string, string] } | null = null;
-  let bestFallback: { score: number; teamA: [string, string]; teamB: [string, string] } | null = null;
 
   for (let i = 0; i < pool.length - 3; i += 1) {
     for (let j = i + 1; j < pool.length - 2; j += 1) {
       for (let k = j + 1; k < pool.length - 1; k += 1) {
         for (let l = k + 1; l < pool.length; l += 1) {
           const quartet = [pool[i], pool[j], pool[k], pool[l]] as [Player, Player, Player, Player];
-          const maleCount = quartet.filter((player) => player.gender === 'M').length;
-          const mixedEligible = maleCount === 2;
           const ids = quartet.map((player) => player.id) as [string, string, string, string];
           const gamesSum = ids.reduce((sum, id) => sum + (stats.get(id)?.gamesPlayed ?? 0), 0);
 
@@ -336,20 +333,6 @@ function chooseFairReadyMatch(
               teamB,
             };
 
-            if (!bestFallback || candidate.score < bestFallback.score) {
-              bestFallback = candidate;
-            }
-
-            if (!mixedEligible) {
-              continue;
-            }
-
-            const teamAMixed = pool.find((player) => player.id === teamA[0])?.gender !== pool.find((player) => player.id === teamA[1])?.gender;
-            const teamBMixed = pool.find((player) => player.id === teamB[0])?.gender !== pool.find((player) => player.id === teamB[1])?.gender;
-            if (!teamAMixed || !teamBMixed) {
-              continue;
-            }
-
             if (!best || candidate.score < best.score) {
               best = candidate;
             }
@@ -359,15 +342,25 @@ function chooseFairReadyMatch(
     }
   }
 
-  const picked = best ?? bestFallback;
-  if (!picked) {
+  if (!best) {
     return null;
   }
 
   return {
-    teamA: picked.teamA,
-    teamB: picked.teamB,
+    teamA: best.teamA,
+    teamB: best.teamB,
   };
+}
+
+function matchTypeFromTeams(
+  batch: BatchSnapshot,
+  teams: { teamA: [string, string]; teamB: [string, string] },
+): 'mixed' | 'custom' {
+  const playerMap = new Map(batch.players.map((player) => [player.id, player]));
+  const genders = [...teams.teamA, ...teams.teamB].map((id) => playerMap.get(id)?.gender).filter(Boolean) as Gender[];
+  const maleCount = genders.filter((gender) => gender === 'M').length;
+  const femaleCount = genders.filter((gender) => gender === 'F').length;
+  return maleCount === 2 && femaleCount === 2 ? 'mixed' : 'custom';
 }
 
 function chooseReadyMatchWithLockedPair(
@@ -673,6 +666,8 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const loadInFlightRef = useRef(false);
   const loadAgainRef = useRef(false);
   const queueMutationLockRef = useRef(false);
+  const pendingPlayerStatusRef = useRef<Map<string, 'checked-in' | 'break'>>(new Map());
+  const toggleSyncTimerRef = useRef<number | null>(null);
 
   const clearActionError = useCallback(() => {
     setLastActionError(null);
@@ -1247,18 +1242,75 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     const nextStatus = player.status === 'break' ? 'checked-in' : 'break';
-    await supabase.from('players').update({ status: nextStatus }).eq('id', playerId);
+    const pair = player.pairId ? batch.pairs.find((entry) => entry.id === player.pairId) : undefined;
+    const pairedIds = pair?.playerIds ?? [];
+    const targetIds = Array.from(new Set([playerId, ...pairedIds]));
 
-    if (player.pairId) {
-      const pair = batch.pairs.find((entry) => entry.id === player.pairId);
-      const mateId = pair?.playerIds.find((id) => id !== playerId);
-      if (mateId) {
-        await supabase.from('players').update({ status: nextStatus }).eq('id', mateId);
-      }
+    // Optimistic transition for instant UX while backend sync is batched.
+    setSnapshot((current) => {
+      const batchSnapshot = current.batches[batchId];
+      const idSet = new Set(targetIds);
+      return {
+        ...current,
+        batches: {
+          ...current.batches,
+          [batchId]: {
+            ...batchSnapshot,
+            players: batchSnapshot.players.map((entry) =>
+              idSet.has(entry.id)
+                ? {
+                    ...entry,
+                    status: nextStatus,
+                    updatedAt: nowIso(),
+                  }
+                : entry,
+            ),
+          },
+        },
+      };
+    });
+
+    targetIds.forEach((id) => {
+      pendingPlayerStatusRef.current.set(id, nextStatus);
+    });
+
+    if (toggleSyncTimerRef.current !== null) {
+      window.clearTimeout(toggleSyncTimerRef.current);
     }
 
-    await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches]);
+    toggleSyncTimerRef.current = window.setTimeout(() => {
+      const flush = async () => {
+        const pendingEntries = Array.from(pendingPlayerStatusRef.current.entries());
+        pendingPlayerStatusRef.current.clear();
+        toggleSyncTimerRef.current = null;
+
+        const checkedInIds = pendingEntries.filter(([, status]) => status === 'checked-in').map(([id]) => id);
+        const breakIds = pendingEntries.filter(([, status]) => status === 'break').map(([id]) => id);
+
+        if (checkedInIds.length > 0) {
+          const { error } = await supabase.from('players').update({ status: 'checked-in' }).in('id', checkedInIds);
+          if (error) {
+            reportActionError(`Player sync failed: ${error.message}`);
+            await loadFromDatabase();
+            return;
+          }
+        }
+
+        if (breakIds.length > 0) {
+          const { error } = await supabase.from('players').update({ status: 'break' }).in('id', breakIds);
+          if (error) {
+            reportActionError(`Player sync failed: ${error.message}`);
+            await loadFromDatabase();
+            return;
+          }
+        }
+
+        await loadFromDatabase();
+      }
+
+      void flush();
+    }, 180);
+  }, [loadFromDatabase, reportActionError, snapshot.batches]);
 
   const lockSelectedPair = useCallback(async (batchId: BatchId, firstPlayerId: string, secondPlayerId: string) => {
     const supabase = supabaseRef.current;
@@ -1415,7 +1467,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         status: 'queued';
         score_team1: number;
         score_team2: number;
-        match_type?: 'mixed';
+        match_type?: 'mixed' | 'custom';
       } = {
         batch_id: dbBatchId,
         court_id: null,
@@ -1431,7 +1483,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       };
 
       if (supportsMatchTypeRef.current) {
-        payload.match_type = 'mixed';
+        payload.match_type = matchTypeFromTeams(batch, next);
       }
 
       const { error: insertError } = await supabase.from('matches').insert(payload);
@@ -1509,10 +1561,192 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const refreshQueueProcess = useCallback(async (batchId: BatchId) => {
-    const queuedCount = snapshot.batches[batchId].queuedMatches.length;
-    const target = Math.max(1, queuedCount + 1);
-    await ensureReadyMatches(batchId, target);
-  }, [ensureReadyMatches, snapshot.batches]);
+    clearActionError();
+    const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
+    if (!supabase || !dbBatchId) {
+      reportActionError('Refresh queue failed: missing database connection or batch mapping.');
+      return;
+    }
+
+    const lockAcquired = await acquireQueueLock();
+    if (!lockAcquired) {
+      return;
+    }
+
+    try {
+      const batch = snapshot.batches[batchId];
+      let queuedRows: Array<{
+        id: string;
+        team1_player1_id: string | null;
+        team1_player2_id: string | null;
+        team2_player1_id: string | null;
+        team2_player2_id: string | null;
+        queue_position: number | null;
+        start_time: string | null;
+        match_type?: 'custom' | 'mixed';
+      }> = [];
+
+      if (supportsMatchTypeRef.current) {
+        const withType = await supabase
+          .from('matches')
+          .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,queue_position,start_time,match_type')
+          .eq('batch_id', dbBatchId)
+          .in('status', ['queued', 'active'])
+          .is('court_id', null)
+          .order('queue_position', { ascending: true, nullsFirst: false })
+          .order('start_time', { ascending: true });
+
+        if (withType.error?.code === '42703') {
+          supportsMatchTypeRef.current = false;
+        } else if (withType.error) {
+          reportActionError(`Refresh queue failed: ${withType.error.message}`);
+          return;
+        } else {
+          queuedRows = (withType.data ?? []) as typeof queuedRows;
+        }
+      }
+
+      if (!supportsMatchTypeRef.current) {
+        const fallback = await supabase
+          .from('matches')
+          .select('id,team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id,queue_position,start_time')
+          .eq('batch_id', dbBatchId)
+          .in('status', ['queued', 'active'])
+          .is('court_id', null)
+          .order('queue_position', { ascending: true, nullsFirst: false })
+          .order('start_time', { ascending: true });
+
+        if (fallback.error) {
+          reportActionError(`Refresh queue failed: ${fallback.error.message}`);
+          return;
+        }
+
+        queuedRows = ((fallback.data ?? []) as typeof queuedRows).map((row) => ({
+          ...row,
+          match_type: 'mixed',
+        }));
+      }
+
+      const queue = queuedRows.slice().sort((a, b) => {
+        const aPos = a.queue_position ?? Number.MAX_SAFE_INTEGER;
+        const bPos = b.queue_position ?? Number.MAX_SAFE_INTEGER;
+        if (aPos !== bPos) {
+          return aPos - bPos;
+        }
+        return (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id);
+      });
+
+      if (queue.length <= 1) {
+        return;
+      }
+
+      const lockedIds = new Set<string>();
+      lockedIds.add(queue[0].id);
+      for (const row of queue) {
+        if ((row.match_type ?? 'mixed') === 'custom') {
+          lockedIds.add(row.id);
+        }
+      }
+
+      const liveIds = new Set(
+        batch.courts
+          .filter((court) => court.status === 'live')
+          .flatMap((court) => court.sourceUnitIds),
+      );
+
+      const lockedPlayers = new Set<string>();
+      for (const row of queue) {
+        if (!lockedIds.has(row.id)) {
+          continue;
+        }
+        matchPlayerIds(row).forEach((id) => lockedPlayers.add(id));
+      }
+
+      const autoRows = queue.filter((row) => !lockedIds.has(row.id));
+      if (autoRows.length === 0) {
+        return;
+      }
+
+      const eligiblePlayers = batch.players.filter(
+        (player) => player.status === 'checked-in' && !liveIds.has(player.id) && !lockedPlayers.has(player.id),
+      );
+
+      const neededPlayers = autoRows.length * 4;
+      if (eligiblePlayers.length < neededPlayers) {
+        reportActionError('Refresh queue failed: not enough eligible checked-in players to rebuild auto matches.');
+        return;
+      }
+
+      const stats = getPlayerStats(batch);
+      const pairMateByPlayerId = new Map<string, string>();
+      for (const pair of batch.pairs) {
+        pairMateByPlayerId.set(pair.playerIds[0], pair.playerIds[1]);
+        pairMateByPlayerId.set(pair.playerIds[1], pair.playerIds[0]);
+      }
+
+      const pool = [...eligiblePlayers];
+      const rebuilt: Array<{ teamA: [string, string]; teamB: [string, string] }> = [];
+      for (let index = 0; index < autoRows.length; index += 1) {
+        const next = chooseReadyMatchWithLockedPair(pool, stats, pairMateByPlayerId) ?? chooseFairReadyMatch(pool, stats);
+        if (!next) {
+          reportActionError('Refresh queue failed: could not build fair matches for all unlocked slots.');
+          return;
+        }
+
+        rebuilt.push(next);
+        const used = new Set([...next.teamA, ...next.teamB]);
+        for (let i = pool.length - 1; i >= 0; i -= 1) {
+          if (used.has(pool[i].id)) {
+            pool.splice(i, 1);
+          }
+        }
+      }
+
+      for (let index = 0; index < autoRows.length; index += 1) {
+        const row = autoRows[index];
+        const teams = rebuilt[index];
+        const payload: {
+          team1_player1_id: string;
+          team1_player2_id: string;
+          team2_player1_id: string;
+          team2_player2_id: string;
+          match_type?: 'mixed' | 'custom';
+        } = {
+          team1_player1_id: teams.teamA[0],
+          team1_player2_id: teams.teamA[1],
+          team2_player1_id: teams.teamB[0],
+          team2_player2_id: teams.teamB[1],
+        };
+
+        if (supportsMatchTypeRef.current) {
+          payload.match_type = matchTypeFromTeams(batch, teams);
+        }
+
+        const { error } = await supabase
+          .from('matches')
+          .update(payload)
+          .eq('id', row.id)
+          .eq('batch_id', dbBatchId)
+          .is('court_id', null);
+
+        if (error) {
+          reportActionError(`Refresh queue failed: ${error.message}`);
+          return;
+        }
+      }
+
+      const resequence = await updateQueuePositions(supabase, dbBatchId, queue);
+      if (resequence.error) {
+        reportActionError(`Refresh queue failed while resequencing: ${resequence.error}`);
+        return;
+      }
+
+      await loadFromDatabase();
+    } finally {
+      queueMutationLockRef.current = false;
+    }
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const cancelMatch = useCallback(async (batchId: BatchId, courtId: string) => {
     const supabase = supabaseRef.current;
@@ -1991,6 +2225,43 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
+  const generateSingleGenderCustomMatch = useCallback(async (
+    batchId: BatchId,
+    gender: Gender,
+    placement: 'top' | 'bottom',
+  ) => {
+    clearActionError();
+    const batch = snapshot.batches[batchId];
+    const liveIds = new Set(
+      batch.courts
+        .filter((court) => court.status === 'live')
+        .flatMap((court) => court.sourceUnitIds),
+    );
+    const queuedIds = new Set(batch.queuedMatches.flatMap((match) => match.playerIds));
+
+    const available = batch.players.filter(
+      (player) =>
+        player.status === 'checked-in' &&
+        player.gender === gender &&
+        !liveIds.has(player.id) &&
+        !queuedIds.has(player.id),
+    );
+
+    if (available.length < 4) {
+      reportActionError(`Custom match failed: need at least 4 checked-in ${gender === 'M' ? 'male' : 'female'} players.`);
+      return;
+    }
+
+    const stats = getPlayerStats(batch);
+    const match = chooseFairReadyMatch(available, stats);
+    if (!match) {
+      reportActionError('Custom match failed: could not generate a fair match from eligible players.');
+      return;
+    }
+
+    await enqueueCustomMatch(batchId, [...match.teamA, ...match.teamB], placement);
+  }, [clearActionError, enqueueCustomMatch, reportActionError, snapshot.batches]);
+
   const fillIdleCourts = useCallback(async (batchId: BatchId) => {
     clearActionError();
     const supabase = supabaseRef.current;
@@ -2000,6 +2271,12 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
+    const lockAcquired = await acquireQueueLock();
+    if (!lockAcquired) {
+      return;
+    }
+
+    try {
     const idleCourts = snapshot.batches[batchId].courts.filter((court) => court.status === 'idle' && court.isActive);
     if (idleCourts.length === 0) {
       return;
@@ -2054,7 +2331,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     await loadFromDatabase();
-  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+    } finally {
+      queueMutationLockRef.current = false;
+    }
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const startQueuedMatchOnCourt = useCallback(async (batchId: BatchId, courtId: string, matchId: string) => {
     clearActionError();
@@ -2322,6 +2602,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     refreshQueueProcess,
     ensureReadyMatches,
     enqueueCustomMatch,
+    generateSingleGenderCustomMatch,
     startQueuedMatchOnCourt,
     startMatchOnCourt,
     completeMatch,

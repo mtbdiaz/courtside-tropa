@@ -71,6 +71,7 @@ export default function CourtsideBoard({
     refreshQueueProcess,
     ensureReadyMatches,
     enqueueCustomMatch,
+    generateSingleGenderCustomMatch,
     startQueuedMatchOnCourt,
     completeMatch,
     cancelMatch,
@@ -133,6 +134,7 @@ function readPersistedBatchUiSettings() {
   const [queuePausedByBatch, setQueuePausedByBatch] = useState<Record<BatchId, boolean>>(initialBatchUiSettings.queuePausedByBatch);
   const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>(initialBatchUiSettings.autoFillEnabledByBatch);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toggleBreakDisabledUntil, setToggleBreakDisabledUntil] = useState<Record<string, number>>({});
   const autoFillRunningRef = useRef(false);
 
   useEffect(() => {
@@ -311,28 +313,23 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    if (!autoFillRunningRef.current) {
-      autoFillRunningRef.current = true;
-      Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
-        autoFillRunningRef.current = false;
-      });
+    if (autoFillRunningRef.current) {
+      return;
     }
 
-    const intervalId = window.setInterval(() => {
-      if (autoFillRunningRef.current) {
-        return;
-      }
-
-      autoFillRunningRef.current = true;
-      Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
-        autoFillRunningRef.current = false;
-      });
-    }, 15_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [activeBatch.batchId, autoFillEnabled, fillIdleCourts, publicView, scoreOnly]);
+    autoFillRunningRef.current = true;
+    Promise.resolve(fillIdleCourts(activeBatch.batchId)).finally(() => {
+      autoFillRunningRef.current = false;
+    });
+  }, [
+    activeBatch.batchId,
+    autoFillEnabled,
+    fillIdleCourts,
+    publicView,
+    scoreOnly,
+    activeBatch.courts,
+    activeBatch.queuedMatches,
+  ]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -365,6 +362,29 @@ function readPersistedBatchUiSettings() {
 
   const handleDeleteQueueMatch = async (sourceUnitIds: string[]) => {
     await removeQueueMatch(activeBatch.batchId, sourceUnitIds);
+  };
+
+  const handleToggleBreak = (playerId: string) => {
+    const now = Date.now();
+    const disabledUntil = toggleBreakDisabledUntil[playerId] ?? 0;
+    if (disabledUntil > now) {
+      return;
+    }
+
+    setToggleBreakDisabledUntil((current) => ({
+      ...current,
+      [playerId]: now + 300,
+    }));
+
+    window.setTimeout(() => {
+      setToggleBreakDisabledUntil((current) => {
+        const next = { ...current };
+        delete next[playerId];
+        return next;
+      });
+    }, 320);
+
+    void toggleBreak(activeBatch.batchId, playerId);
   };
 
   const handlePlaceQueueOnCourt = async (courtId: string, matchId: string) => {
@@ -492,6 +512,10 @@ function readPersistedBatchUiSettings() {
     }
 
     await deleteAllMatchHistoryForBatch(activeBatch.batchId);
+  };
+
+  const handleGenerateGenderCustom = async (gender: 'M' | 'F', placement: 'top' | 'bottom') => {
+    await generateSingleGenderCustomMatch(activeBatch.batchId, gender, placement);
   };
 
   if (!isReady) {
@@ -1084,14 +1108,14 @@ function readPersistedBatchUiSettings() {
                       : 'border-white/10 bg-white/5 text-slate-100/90 hover:bg-white/10'
                   }`}
                 >
-                  {autoFillEnabled ? 'Auto-fill 15s: On' : 'Auto-fill 15s: Off'}
+                  {autoFillEnabled ? 'Auto-fill: On' : 'Auto-fill: Off'}
                 </button>
                 <button
                   type="button"
                   onClick={() => refreshQueueProcess(activeBatch.batchId)}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
-                  Generate 1 Queue
+                  Refresh Queue
                 </button>
                 <button
                   type="button"
@@ -1299,7 +1323,8 @@ function readPersistedBatchUiSettings() {
                     <span className="text-white">{player.name}</span>
                     <button
                       type="button"
-                      onClick={() => toggleBreak(activeBatch.batchId, player.id)}
+                      onClick={() => handleToggleBreak(player.id)}
+                      disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
                       className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
                     >
                       Check In
@@ -1317,7 +1342,8 @@ function readPersistedBatchUiSettings() {
                     <span className="text-white">{player.name}</span>
                     <button
                       type="button"
-                      onClick={() => toggleBreak(activeBatch.batchId, player.id)}
+                      onClick={() => handleToggleBreak(player.id)}
+                      disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
                       className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90"
                     >
                       Break
@@ -1400,7 +1426,12 @@ function readPersistedBatchUiSettings() {
                           <div className="text-xs text-slate-300/80">{player.status}</div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => toggleBreak(activeBatch.batchId, player.id)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBreak(player.id)}
+                            disabled={(toggleBreakDisabledUntil[player.id] ?? 0) > Date.now()}
+                            className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
                             {player.status === 'break' ? 'Return' : 'Break'}
                           </button>
                           <button type="button" onClick={() => beginEditPlayer(player.id)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-100/90">
@@ -1502,6 +1533,37 @@ function readPersistedBatchUiSettings() {
                 className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Add to Bottom
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => handleGenerateGenderCustom('M', 'top')}
+                className="rounded-2xl border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-100"
+              >
+                Generate 1 All Male Match (Top)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleGenerateGenderCustom('M', 'bottom')}
+                className="rounded-2xl border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-100"
+              >
+                Generate 1 All Male Match (Bottom)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleGenerateGenderCustom('F', 'top')}
+                className="rounded-2xl border border-fuchsia-300/40 bg-fuchsia-500/10 px-4 py-3 text-sm font-semibold text-fuchsia-100"
+              >
+                Generate 1 All Female Match (Top)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleGenerateGenderCustom('F', 'bottom')}
+                className="rounded-2xl border border-fuchsia-300/40 bg-fuchsia-500/10 px-4 py-3 text-sm font-semibold text-fuchsia-100"
+              >
+                Generate 1 All Female Match (Bottom)
               </button>
             </div>
           </article>
