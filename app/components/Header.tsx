@@ -30,7 +30,7 @@ export default function Header() {
             <span>Paddle Up! Davao • Buhangin</span>
           </div>
           <Link
-            href="/queue?batch=1"
+            href="/queue"
             className="glass-panel inline-flex items-center gap-2 rounded-full px-4 py-2 transition hover:border-amber-300/40 hover:bg-white/12"
           >
             <Waves className="h-4 w-4 text-amber-200" />
