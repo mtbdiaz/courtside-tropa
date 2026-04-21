@@ -105,6 +105,23 @@ function TeamList({ players, alignRight = false, size = 'sm', getGender }: { pla
 
 type BoardMode = 'admin' | 'public' | 'score';
 
+type NowCallingAnnouncement =
+  | {
+      id: string;
+      type: 'court-assigned';
+      courtLabel: string;
+      teamA: string[];
+      teamB: string[];
+    }
+  | {
+      id: string;
+      type: 'next-up';
+      matchId: string;
+      mode: 'mixed' | 'custom';
+      teamA: string[];
+      teamB: string[];
+    };
+
 const BATCH_UI_SETTINGS_STORAGE_KEY = 'courtside:batch-ui-settings:v1';
 const DEFAULT_QUEUE_PAUSED_BY_BATCH: Record<BatchId, boolean> = { 1: false, 2: false };
 const DEFAULT_AUTOFILL_ENABLED_BY_BATCH: Record<BatchId, boolean> = { 1: false, 2: false };
@@ -216,8 +233,13 @@ function readPersistedBatchUiSettings() {
   const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>(initialBatchUiSettings.autoFillEnabledByBatch);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toggleBreakDisabledUntil, setToggleBreakDisabledUntil] = useState<Record<string, number>>({});
-  const [highlightedMatchId, setHighlightedMatchId] = useState<string | null>(null);
+  const [nowCallingQueue, setNowCallingQueue] = useState<NowCallingAnnouncement[]>([]);
+  const [activeNowCallingAnnouncement, setActiveNowCallingAnnouncement] = useState<NowCallingAnnouncement | null>(null);
   const autoFillRunningRef = useRef(false);
+  const seenLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
+  const liveCourtTrackerInitializedRef = useRef(false);
+  const previousNowCallingMatchIdRef = useRef<string | null>(null);
+  const nowCallingMatchTrackerInitializedRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -383,21 +405,117 @@ function readPersistedBatchUiSettings() {
   }, [activeBatch]);
 
   const upcomingMatches = activeBatch.queuedMatches;
-  const nextCallingMatchId = upcomingMatches[0]?.id ?? null;
 
   useEffect(() => {
-    if (!publicView || !nextCallingMatchId) {
-      setHighlightedMatchId(null);
+    if (!publicView) {
+      liveCourtTrackerInitializedRef.current = false;
+      seenLiveCourtSignatureByIdRef.current = {};
       return;
     }
 
-    setHighlightedMatchId(nextCallingMatchId);
+    const currentLiveCourtSignatureById: Record<string, string> = {};
+    for (const court of activeBatch.courts) {
+      if (court.status !== 'live') {
+        continue;
+      }
+      currentLiveCourtSignatureById[court.id] = `${court.status}:${court.sourceUnitIds.join('|')}`;
+    }
+
+    if (!liveCourtTrackerInitializedRef.current) {
+      liveCourtTrackerInitializedRef.current = true;
+      seenLiveCourtSignatureByIdRef.current = currentLiveCourtSignatureById;
+      return;
+    }
+
+    const newAnnouncements: NowCallingAnnouncement[] = [];
+    for (const court of activeBatch.courts) {
+      if (court.status !== 'live') {
+        continue;
+      }
+
+      const nextSignature = currentLiveCourtSignatureById[court.id];
+      const previousSignature = seenLiveCourtSignatureByIdRef.current[court.id];
+      if (nextSignature !== previousSignature) {
+        newAnnouncements.push({
+          id: `court-assigned-${court.id}-${Date.now()}-${newAnnouncements.length}`,
+          type: 'court-assigned',
+          courtLabel: court.label,
+          teamA: [...court.teamA],
+          teamB: [...court.teamB],
+        });
+      }
+    }
+
+    seenLiveCourtSignatureByIdRef.current = currentLiveCourtSignatureById;
+
+    if (newAnnouncements.length > 0) {
+      setNowCallingQueue((current) => {
+        const firstNextUpIndex = current.findIndex((entry) => entry.type === 'next-up');
+        if (firstNextUpIndex === -1) {
+          return [...current, ...newAnnouncements];
+        }
+        return [...current.slice(0, firstNextUpIndex), ...newAnnouncements, ...current.slice(firstNextUpIndex)];
+      });
+    }
+  }, [activeBatch.courts, publicView]);
+
+  useEffect(() => {
+    if (!publicView) {
+      nowCallingMatchTrackerInitializedRef.current = false;
+      previousNowCallingMatchIdRef.current = null;
+      return;
+    }
+
+    const nextMatch = upcomingMatches[0];
+    const nextMatchId = nextMatch?.id ?? null;
+
+    if (!nowCallingMatchTrackerInitializedRef.current) {
+      nowCallingMatchTrackerInitializedRef.current = true;
+      previousNowCallingMatchIdRef.current = nextMatchId;
+      return;
+    }
+
+    const previousMatchId = previousNowCallingMatchIdRef.current;
+    if (nextMatch && nextMatchId && previousMatchId && nextMatchId !== previousMatchId) {
+      setNowCallingQueue((current) => [
+        ...current,
+        {
+          id: `next-up-${nextMatch.id}-${Date.now()}`,
+          type: 'next-up',
+          matchId: nextMatch.id,
+          mode: nextMatch.mode,
+          teamA: [...nextMatch.teamA],
+          teamB: [...nextMatch.teamB],
+        },
+      ]);
+    }
+
+    previousNowCallingMatchIdRef.current = nextMatchId;
+  }, [publicView, upcomingMatches]);
+
+  useEffect(() => {
+    if (!publicView) {
+      setActiveNowCallingAnnouncement(null);
+      setNowCallingQueue([]);
+      return;
+    }
+
+    if (activeNowCallingAnnouncement || nowCallingQueue.length === 0) {
+      return;
+    }
+
+    const [nextAnnouncement, ...remaining] = nowCallingQueue;
+    setActiveNowCallingAnnouncement(nextAnnouncement);
+    setNowCallingQueue(remaining);
+
     const timeoutId = window.setTimeout(() => {
-      setHighlightedMatchId((current) => (current === nextCallingMatchId ? null : current));
+      setActiveNowCallingAnnouncement((current) =>
+        current?.id === nextAnnouncement.id ? null : current,
+      );
     }, 5000);
 
     return () => window.clearTimeout(timeoutId);
-  }, [nextCallingMatchId, publicView]);
+  }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
 
   const queuePaused = queuePausedByBatch[activeBatch.batchId];
   const autoFillEnabled = autoFillEnabledByBatch[activeBatch.batchId];
@@ -649,7 +767,12 @@ function readPersistedBatchUiSettings() {
     const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle' && court.isActive);
     const nextTwoMatches = upcomingMatches.slice(0, 2);
     const nextMatch = nextTwoMatches[0];
-    const isHighlighting = Boolean(nextMatch && highlightedMatchId === nextMatch.id);
+    const courtAssignedAnnouncement = activeNowCallingAnnouncement?.type === 'court-assigned' ? activeNowCallingAnnouncement : null;
+    const isHighlighting = Boolean(
+      nextMatch &&
+      activeNowCallingAnnouncement?.type === 'next-up' &&
+      activeNowCallingAnnouncement.matchId === nextMatch.id,
+    );
 
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
@@ -699,7 +822,40 @@ function readPersistedBatchUiSettings() {
               <div className="text-[11px] font-black uppercase tracking-[0.3em] text-amber-100/90">Now Calling</div>
             </div>
 
-            {nextMatch ? (
+            {courtAssignedAnnouncement ? (
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={courtAssignedAnnouncement.id}
+                  initial={{ opacity: 0, scale: 0.98, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.98, y: -8 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  className="rounded-[2rem] border-2 border-amber-300/70 bg-gradient-to-br from-amber-300/30 to-rose-300/20 p-6 shadow-[0_12px_36px_rgba(251,191,36,0.28)]"
+                >
+                  <div className="text-center text-3xl font-black uppercase tracking-[0.2em] text-amber-50 drop-shadow-[0_4px_14px_rgba(0,0,0,0.35)] sm:text-4xl">
+                    GO TO COURT {courtAssignedAnnouncement.courtLabel.replace(/^Court\s*/i, '').trim() || courtAssignedAnnouncement.courtLabel}
+                  </div>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                    <div className="rounded-2xl border border-amber-200/45 bg-black/30 px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-100/90">Team 1</div>
+                      <div className="mt-2">
+                        <TeamList players={courtAssignedAnnouncement.teamA} size="lg" getGender={getGenderForName} />
+                      </div>
+                    </div>
+
+                    <div className="text-center text-2xl font-black uppercase tracking-[0.35em] text-amber-100">VS</div>
+
+                    <div className="rounded-2xl border border-amber-200/45 bg-black/30 px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-100/90">Team 2</div>
+                      <div className="mt-2">
+                        <TeamList players={courtAssignedAnnouncement.teamB} size="lg" alignRight getGender={getGenderForName} />
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              </AnimatePresence>
+            ) : nextMatch ? (
               <AnimatePresence mode="wait">
                 <motion.div key={nextMatch.id} layout className="space-y-4">
                   <div className={`grid gap-4 ${isHighlighting ? 'lg:grid-cols-1' : 'lg:grid-cols-2'}`}>
@@ -717,6 +873,12 @@ function readPersistedBatchUiSettings() {
                           {nextTwoMatches[0]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
                         </div>
                       </div>
+
+                      {isHighlighting ? (
+                        <div className="mb-4 text-center text-3xl font-black uppercase tracking-[0.2em] text-amber-50 drop-shadow-[0_4px_14px_rgba(0,0,0,0.35)] sm:text-4xl">
+                          NEXT UP!
+                        </div>
+                      ) : null}
 
                       <div className={isHighlighting ? 'grid gap-4 md:grid-cols-[1fr_auto_1fr]' : 'space-y-3'}>
                         <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
