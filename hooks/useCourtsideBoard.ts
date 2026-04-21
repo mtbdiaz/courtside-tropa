@@ -814,6 +814,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const [syncStatus, setSyncStatus] = useState<'loading' | 'online' | 'offline'>('loading');
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [lastActionError, setLastActionError] = useState<string | null>(null);
+  const [queueProcessing, setQueueProcessing] = useState(false);
   const [activeModes, setActiveModes] = useState<Record<BatchId, MatchMode>>({ 1: 'mixed', 2: 'mixed' });
   const loadInFlightRef = useRef(false);
   const loadAgainRef = useRef(false);
@@ -843,7 +844,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     queueMutationLockRef.current = true;
+    setQueueProcessing(true);
     return true;
+  }, []);
+
+  const releaseQueueLock = useCallback(() => {
+    queueMutationLockRef.current = false;
+    setQueueProcessing(false);
   }, []);
 
   const activeBatch = snapshot.batches[snapshot.activeBatchId];
@@ -1579,7 +1586,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     await loadFromDatabase();
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
-  const ensureReadyMatches = useCallback(async (batchId: BatchId, targetReadyMatches = 6) => {
+  const ensureReadyMatches = useCallback(async (batchId: BatchId, targetReadyMatches = 5) => {
     clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
@@ -1716,9 +1723,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
   const moveQueueUnit = useCallback(async (batchId: BatchId, matchId: string, direction: 'up' | 'down') => {
     clearActionError();
@@ -1770,9 +1777,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
   const cancelMatch = useCallback(async (batchId: BatchId, courtId: string) => {
     const supabase = supabaseRef.current;
@@ -1942,13 +1949,20 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
-  const completeMatch = useCallback(async (batchId: BatchId, courtId: string, scoreA: number, scoreB: number) => {
+  const completeMatch = useCallback(async (batchId: BatchId, courtId: string, scoreA: number | null, scoreB: number | null) => {
     const supabase = supabaseRef.current;
     if (!supabase) {
+      return;
+    }
+
+    clearActionError();
+
+    if (scoreA === null || scoreB === null) {
+      reportActionError('Save score failed: both scores are required.');
       return;
     }
 
@@ -1983,15 +1997,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     if (playerIds.length > 0) {
       const base = Date.now();
-      for (let i = 0; i < playerIds.length; i += 1) {
-        await supabase
-          .from('players')
-          .update({
-            created_at: new Date(base + i * 1000).toISOString(),
-            status: 'checked-in',
-          })
-          .eq('id', playerIds[i]);
-      }
+      await Promise.all(
+        playerIds.map((id, index) =>
+          supabase
+            .from('players')
+            .update({
+              created_at: new Date(base + index * 1000).toISOString(),
+              status: 'break',
+            })
+            .eq('id', id)
+            .eq('batch_id', withBatchDbId(batchId)),
+        ),
+      );
     }
 
     await supabase.from('courts').update({
@@ -2022,7 +2039,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     });
 
     await loadFromDatabase();
-  }, [loadFromDatabase, snapshot.batches, withBatchDbId]);
+  }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const editScore = useCallback(async (batchId: BatchId, matchId: string, scoreA: number | null, scoreB: number | null) => {
     const supabase = supabaseRef.current;
@@ -2249,9 +2266,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
   const generateSingleGenderCustomMatch = useCallback(async (
     batchId: BatchId,
@@ -2360,9 +2377,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
   const startQueuedMatchOnCourt = useCallback(async (batchId: BatchId, courtId: string, matchId: string) => {
     clearActionError();
@@ -2418,9 +2435,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
   const deleteAllPlayersForBatch = useCallback(async (batchId: BatchId) => {
     clearActionError();
@@ -2471,9 +2488,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
   const setAllPlayersBreakForBatch = useCallback(async (batchId: BatchId) => {
     clearActionError();
@@ -2525,9 +2542,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
   const deleteAllMatchHistoryForBatch = useCallback(async (batchId: BatchId) => {
     clearActionError();
@@ -2566,9 +2583,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
       await loadFromDatabase();
     } finally {
-      queueMutationLockRef.current = false;
+      releaseQueueLock();
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
   const signOut = useCallback(async () => {
     const supabase = supabaseRef.current;
@@ -2612,6 +2629,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     syncStatus,
     lastActionError,
     clearActionError,
+    queueProcessing,
     authEmail,
     setActiveBatchId,
     setMode,

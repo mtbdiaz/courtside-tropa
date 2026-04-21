@@ -194,6 +194,7 @@ export default function CourtsideBoard({
     completeMatch,
     cancelMatch,
     fillIdleCourts,
+    queueProcessing,
     deleteAllPlayersForBatch,
     setAllPlayersBreakForBatch,
     deleteAllMatchHistoryForBatch,
@@ -257,6 +258,7 @@ function readPersistedBatchUiSettings() {
   const [nowCallingQueue, setNowCallingQueue] = useState<NowCallingAnnouncement[]>([]);
   const [activeNowCallingAnnouncement, setActiveNowCallingAnnouncement] = useState<NowCallingAnnouncement | null>(null);
   const autoFillRunningRef = useRef(false);
+  const autoFillIntervalRef = useRef<number | null>(null);
   const fillIdleCourtsRef = useRef(fillIdleCourts);
   const seenLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
   const liveCourtTrackerInitializedRef = useRef(false);
@@ -592,11 +594,16 @@ function readPersistedBatchUiSettings() {
   }, [activeBatch.batchId, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
 
   useEffect(() => {
+    if (autoFillIntervalRef.current !== null) {
+      window.clearInterval(autoFillIntervalRef.current);
+      autoFillIntervalRef.current = null;
+    }
+
     if (publicView || scoreOnly || !autoFillEnabled || queuePaused) {
       return;
     }
 
-    const intervalId = window.setInterval(() => {
+    const runAutoFill = () => {
       if (autoFillRunningRef.current) {
         return;
       }
@@ -605,10 +612,16 @@ function readPersistedBatchUiSettings() {
       Promise.resolve(fillIdleCourtsRef.current(activeBatch.batchId)).finally(() => {
         autoFillRunningRef.current = false;
       });
-    }, 15000);
+    };
+
+    runAutoFill();
+    autoFillIntervalRef.current = window.setInterval(runAutoFill, 15000);
 
     return () => {
-      window.clearInterval(intervalId);
+      if (autoFillIntervalRef.current !== null) {
+        window.clearInterval(autoFillIntervalRef.current);
+        autoFillIntervalRef.current = null;
+      }
     };
   }, [activeBatch.batchId, autoFillEnabled, publicView, queuePaused, scoreOnly]);
 
@@ -646,7 +659,11 @@ function readPersistedBatchUiSettings() {
   };
 
   const handleGenerateOneQueue = async () => {
-    const target = Math.max(1, activeBatch.queuedMatches.length + 1);
+    if (queueProcessing || activeBatch.queuedMatches.length >= 5) {
+      return;
+    }
+
+    const target = Math.min(5, Math.max(1, activeBatch.queuedMatches.length + 1));
     await ensureReadyMatches(activeBatch.batchId, target);
   };
 
@@ -1520,7 +1537,7 @@ function readPersistedBatchUiSettings() {
                 <button
                   type="button"
                   onClick={handleGenerateOneQueue}
-                  disabled={queuePaused}
+                  disabled={queuePaused || queueProcessing || activeBatch.queuedMatches.length >= 5 || batchCounts.checkedIn < 4}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
                   Generate 1 Queue
@@ -1528,7 +1545,7 @@ function readPersistedBatchUiSettings() {
                 <button
                   type="button"
                   onClick={() => fillIdleCourts(activeBatch.batchId)}
-                  disabled={queuePaused}
+                  disabled={queueProcessing}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
                   Auto-fill courts
