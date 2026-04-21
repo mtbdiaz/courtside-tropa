@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { BatchId } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
 import { getLeaderboardEntries } from '@/lib/courtside-engine';
+import { AnimatePresence, motion } from 'framer-motion';
 import { LogOut, Search, Trophy } from 'lucide-react';
 
 function formatTimer(startedAt: string | null, nowMs: number) {
@@ -19,6 +20,81 @@ function formatTimer(startedAt: string | null, nowMs: number) {
     .padStart(2, '0');
   const seconds = (elapsed % 60).toString().padStart(2, '0');
   return `${minutes}:${seconds}`;
+}
+
+function getTimerTone(startedAt: string | null, nowMs: number) {
+  if (!startedAt) {
+    return { className: 'text-emerald-100 bg-emerald-500/10 border-emerald-300/30', pulse: false };
+  }
+
+  const elapsedMinutes = Math.max(0, (nowMs - new Date(startedAt).getTime()) / 60000);
+  if (elapsedMinutes < 10) {
+    return { className: 'text-emerald-100 bg-emerald-500/10 border-emerald-300/30', pulse: false };
+  }
+
+  if (elapsedMinutes < 15) {
+    return { className: 'text-amber-100 bg-amber-500/10 border-amber-300/30', pulse: false };
+  }
+
+  return { className: 'text-rose-100 bg-rose-500/10 border-rose-300/30', pulse: true };
+}
+
+function hashString(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return '?';
+  }
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
+function Avatar({ name, size = 'sm' }: { name: string; size?: 'sm' | 'md' | 'lg' }) {
+  const dimensionClass = size === 'lg' ? 'h-11 w-11 text-sm' : size === 'md' ? 'h-8 w-8 text-xs' : 'h-6 w-6 text-[10px]';
+  const seed = hashString(name);
+  const hue = seed % 360;
+
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-full border border-white/15 font-bold text-white shadow-sm ${dimensionClass}`}
+      style={{ background: `linear-gradient(135deg, hsl(${hue} 82% 56%), hsl(${(hue + 34) % 360} 75% 44%))` }}
+      aria-hidden="true"
+    >
+      {getInitials(name)}
+    </span>
+  );
+}
+
+function PlayerNameRow({ name, alignRight = false, size = 'sm', muted = false }: { name: string; alignRight?: boolean; size?: 'sm' | 'md' | 'lg'; muted?: boolean }) {
+  return (
+    <div className={`flex items-center gap-2 ${alignRight ? 'justify-end' : 'justify-start'}`}>
+      {alignRight ? null : <Avatar name={name} size={size} />}
+      <span className={`${muted ? 'text-slate-200/85' : 'text-white'} ${size === 'lg' ? 'text-base font-semibold' : 'text-sm'}`}>
+        {name}
+      </span>
+      {alignRight ? <Avatar name={name} size={size} /> : null}
+    </div>
+  );
+}
+
+function TeamList({ players, alignRight = false, size = 'sm' }: { players: string[]; alignRight?: boolean; size?: 'sm' | 'md' | 'lg' }) {
+  return (
+    <div className={`space-y-2 ${alignRight ? 'text-right' : 'text-left'}`}>
+      {players.map((player) => (
+        <PlayerNameRow key={player} name={player} alignRight={alignRight} size={size} />
+      ))}
+    </div>
+  );
 }
 
 type BoardMode = 'admin' | 'public' | 'score';
@@ -134,6 +210,7 @@ function readPersistedBatchUiSettings() {
   const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>(initialBatchUiSettings.autoFillEnabledByBatch);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toggleBreakDisabledUntil, setToggleBreakDisabledUntil] = useState<Record<string, number>>({});
+  const [highlightedMatchId, setHighlightedMatchId] = useState<string | null>(null);
   const autoFillRunningRef = useRef(false);
 
   useEffect(() => {
@@ -288,9 +365,26 @@ function readPersistedBatchUiSettings() {
   }, [activeBatch]);
 
   const upcomingMatches = activeBatch.queuedMatches;
+  const nextCallingMatchId = upcomingMatches[0]?.id ?? null;
+
+  useEffect(() => {
+    if (!publicView || !nextCallingMatchId) {
+      setHighlightedMatchId(null);
+      return;
+    }
+
+    setHighlightedMatchId(nextCallingMatchId);
+    const timeoutId = window.setTimeout(() => {
+      setHighlightedMatchId((current) => (current === nextCallingMatchId ? null : current));
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [nextCallingMatchId, publicView]);
 
   const queuePaused = queuePausedByBatch[activeBatch.batchId];
   const autoFillEnabled = autoFillEnabledByBatch[activeBatch.batchId];
+  const topLeaderboard = leaderboard.slice(0, 3);
+  const remainingLeaderboard = leaderboard.slice(3);
 
   useEffect(() => {
     if (publicView || scoreOnly || queuePaused) {
@@ -537,6 +631,7 @@ function readPersistedBatchUiSettings() {
     const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle');
     const nextTwoMatches = upcomingMatches.slice(0, 2);
     const nextMatch = nextTwoMatches[0];
+    const isHighlighting = Boolean(nextMatch && highlightedMatchId === nextMatch.id);
 
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
@@ -579,79 +674,86 @@ function readPersistedBatchUiSettings() {
             </div>
 
             {nextMatch ? (
-              <div className="grid gap-4 lg:grid-cols-2">
-                {/* MATCH #1: LEFT SIDE - HIGHLIGHTED/PRIMARY */}
-                <div className="rounded-[2rem] border-2 border-amber-300/60 bg-gradient-to-br from-amber-300/25 to-amber-400/10 p-5 shadow-[0_8px_32px_rgba(251,191,36,0.3)]">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-100">Match #1</div>
-                    <div className="rounded-full bg-amber-300/30 px-3 py-1 text-xs font-bold text-amber-100">
-                      {nextTwoMatches[0]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
-                    </div>
-                  </div>
+              <AnimatePresence mode="wait">
+                <motion.div key={nextMatch.id} layout className="space-y-4">
+                  <div className={`grid gap-4 ${isHighlighting ? 'lg:grid-cols-1' : 'lg:grid-cols-2'}`}>
+                    <motion.div
+                      layout
+                      className={`rounded-[2rem] border-2 p-5 shadow-[0_8px_32px_rgba(251,191,36,0.3)] ${
+                        isHighlighting
+                          ? 'border-amber-300/70 bg-gradient-to-br from-amber-300/30 to-amber-400/15 lg:col-span-2'
+                          : 'border-amber-300/60 bg-gradient-to-br from-amber-300/25 to-amber-400/10'
+                      }`}
+                    >
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-100">Match #1</div>
+                        <div className="rounded-full bg-amber-300/30 px-3 py-1 text-xs font-bold text-amber-100">
+                          {nextTwoMatches[0]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
+                        </div>
+                      </div>
 
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
-                      <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 1</div>
-                      <div className="mt-2 space-y-1 text-sm font-semibold text-white">
-                        {nextTwoMatches[0]?.teamA.map((player) => (
-                          <div key={player} className="rounded-lg bg-amber-400/10 px-3 py-2">
-                            {player}
+                      <div className={isHighlighting ? 'grid gap-4 md:grid-cols-[1fr_auto_1fr]' : 'space-y-3'}>
+                        <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
+                          <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 1</div>
+                          <div className="mt-2">
+                            <TeamList players={nextTwoMatches[0]?.teamA ?? []} size={isHighlighting ? 'lg' : 'sm'} />
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        </div>
 
-                    <div className="text-center font-black uppercase tracking-[0.35em] text-amber-300/80">VS</div>
+                        <div className={`text-center font-black uppercase tracking-[0.35em] ${isHighlighting ? 'self-center text-amber-200 text-2xl' : 'text-amber-300/80'}`}>VS</div>
 
-                    <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
-                      <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 2</div>
-                      <div className="mt-2 space-y-1 text-sm font-semibold text-white">
-                        {nextTwoMatches[0]?.teamB.map((player) => (
-                          <div key={player} className="rounded-lg bg-amber-400/10 px-3 py-2">
-                            {player}
+                        <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
+                          <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 2</div>
+                          <div className="mt-2">
+                            <TeamList players={nextTwoMatches[0]?.teamB ?? []} size={isHighlighting ? 'lg' : 'sm'} alignRight />
                           </div>
-                        ))}
+                        </div>
                       </div>
-                    </div>
+
+                      {nextOpenCourt && (
+                        <div className={`mt-4 rounded-xl border border-emerald-300/40 bg-emerald-500/10 px-3 py-2 text-center font-bold text-emerald-100 ${isHighlighting ? 'text-sm uppercase tracking-[0.2em]' : 'text-xs'}`}>
+                          {isHighlighting ? nextOpenCourt.label : `→ ${nextOpenCourt.label}`}
+                        </div>
+                      )}
+                    </motion.div>
+
+                    <AnimatePresence mode="wait">
+                      {!isHighlighting && nextTwoMatches.length > 1 ? (
+                        <motion.div
+                          key={nextTwoMatches[1].id}
+                          layout
+                          className="rounded-[2rem] border border-white/20 bg-white/5 p-5"
+                        >
+                          <div className="mb-3 flex items-center justify-between gap-2">
+                            <div className="text-xs font-bold uppercase tracking-[0.3em] text-white/70">Match #2 (Be Ready)</div>
+                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200/80">
+                              {nextTwoMatches[1]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 text-sm">
+                            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+                              <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 1</div>
+                              <div className="mt-2">
+                                <TeamList players={nextTwoMatches[1]?.teamA ?? []} />
+                              </div>
+                            </div>
+
+                            <div className="text-center text-xs font-bold uppercase tracking-[0.3em] text-white/50">VS</div>
+
+                            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+                              <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 2</div>
+                              <div className="mt-2">
+                                <TeamList players={nextTwoMatches[1]?.teamB ?? []} alignRight />
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
                   </div>
-
-                  {nextOpenCourt && (
-                    <div className="mt-4 rounded-xl border border-emerald-300/40 bg-emerald-500/10 px-3 py-2 text-center text-xs font-bold text-emerald-100">
-                      → {nextOpenCourt.label}
-                    </div>
-                  )}
-                </div>
-
-                {/* MATCH #2: RIGHT SIDE - SECONDARY/PREVIEW */}
-                {nextTwoMatches.length > 1 ? (
-                  <div className="rounded-[2rem] border border-white/20 bg-white/5 p-5">
-                    <div className="mb-3 flex items-center justify-between gap-2">
-                      <div className="text-xs font-bold uppercase tracking-[0.3em] text-white/70">Match #2 (Be Ready)</div>
-                      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200/80">
-                        {nextTwoMatches[1]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 text-sm">
-                      <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-                        <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 1</div>
-                        <div className="mt-1 text-sm text-slate-200/90">{nextTwoMatches[1]?.teamA.join(' + ')}</div>
-                      </div>
-
-                      <div className="text-center text-xs font-bold uppercase tracking-[0.3em] text-white/50">VS</div>
-
-                      <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-                        <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 2</div>
-                        <div className="mt-1 text-sm text-slate-200/90">{nextTwoMatches[1]?.teamB.join(' + ')}</div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-[2rem] border border-white/10 bg-white/5 p-5">
-                    <div className="text-center text-sm font-semibold text-white/50">No Match #2 queued yet</div>
-                  </div>
-                )}
-              </div>
+                </motion.div>
+              </AnimatePresence>
             ) : (
               <div className="text-center text-2xl font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-3xl">
                 NO READY MATCHES YET
@@ -701,9 +803,14 @@ function readPersistedBatchUiSettings() {
                 <div key={court.id} className="rounded-[1.5rem] border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-4 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.2)]">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm font-semibold uppercase tracking-[0.28em] text-amber-200">{court.label}</span>
-                    <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100">
-                      {formatTimer(court.startedAt, nowMs)}
-                    </span>
+                    {(() => {
+                      const timerTone = getTimerTone(court.startedAt, nowMs);
+                      return (
+                        <span className={`rounded-full border px-3 py-1 text-xs ${timerTone.className} ${timerTone.pulse ? 'animate-pulse' : ''}`}>
+                          {formatTimer(court.startedAt, nowMs)}
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
@@ -722,30 +829,51 @@ function readPersistedBatchUiSettings() {
             <Trophy className="h-5 w-5 text-amber-300" />
             <h3 className="text-xl font-semibold text-white">Leaderboard</h3>
           </div>
-          <div className="mt-4 space-y-2">
-            {leaderboard.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No completed matches yet.</div>
-            ) : null}
-            {leaderboard.map((entry, index) => (
-              <div
-                key={entry.playerId}
-                className={`flex items-center justify-between rounded-2xl border p-3 text-sm transition ${
-                  index === 0
-                    ? 'animate-pulse border-amber-300/45 bg-amber-300/20'
-                    : index === 1
-                      ? 'border-slate-300/35 bg-slate-200/10'
-                      : index === 2
-                        ? 'border-orange-300/35 bg-orange-300/10'
-                        : 'border-white/10 bg-white/5'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{entry.rank}</span>
-                  <span className="font-medium text-white">{entry.name}</span>
-                </div>
-                <span className="text-slate-300/80">{entry.wins} wins - {entry.gamesPlayed} games</span>
+
+          <div className="mt-4 space-y-4">
+            {topLeaderboard.length > 0 ? (
+              <div className="grid gap-3 lg:grid-cols-3">
+                {topLeaderboard.map((entry, index) => {
+                  const variants = [
+                    'border-amber-300/55 bg-gradient-to-br from-amber-300/25 to-amber-400/10 shadow-[0_10px_30px_rgba(251,191,36,0.18)]',
+                    'border-slate-300/45 bg-slate-100/10',
+                    'border-orange-300/45 bg-orange-300/10',
+                  ];
+
+                  return (
+                    <motion.div key={entry.playerId} layout className={`rounded-[1.5rem] border p-4 ${variants[index] ?? variants[2]}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-xs font-bold text-amber-100">{entry.rank}</span>
+                          <PlayerNameRow name={entry.name} size="md" />
+                        </div>
+                        <div className="text-right text-xs text-slate-200/80">
+                          <div>{entry.wins} wins</div>
+                          <div>{entry.gamesPlayed} games</div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </div>
-            ))}
+            ) : null}
+
+            <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-3">
+              <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                {remainingLeaderboard.length === 0 ? (
+                  <div className="p-3 text-sm text-slate-300/80">No additional leaderboard entries.</div>
+                ) : null}
+                {remainingLeaderboard.map((entry) => (
+                  <div key={entry.playerId} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-xs font-bold text-amber-100">{entry.rank}</span>
+                      <PlayerNameRow name={entry.name} />
+                    </div>
+                    <span className="text-slate-300/80">{entry.wins} wins - {entry.gamesPlayed} games</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
       </main>
@@ -792,12 +920,23 @@ function readPersistedBatchUiSettings() {
                 <div key={court.id} className="rounded-2xl border border-orange-300/30 bg-orange-400/8 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="font-semibold text-white">{court.label}</div>
-                    <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
-                      {formatTimer(court.startedAt, nowMs)}
-                    </div>
+                    {(() => {
+                      const timerTone = getTimerTone(court.startedAt, nowMs);
+                      return (
+                        <div className={`rounded-full border px-3 py-1 text-xs ${timerTone.className} ${timerTone.pulse ? 'animate-pulse' : ''}`}>
+                          {formatTimer(court.startedAt, nowMs)}
+                        </div>
+                      );
+                    })()}
                   </div>
-                  <div className="mt-3 text-sm text-slate-200/90">Team A: {court.teamA.join(', ')}</div>
-                  <div className="mt-1 text-sm text-slate-200/90">Team B: {court.teamB.join(', ')}</div>
+                  <div className="mt-3 text-sm text-slate-200/90">
+                    <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team A</div>
+                    <div className="mt-2"><TeamList players={court.teamA} /></div>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200/90">
+                    <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team B</div>
+                    <div className="mt-2"><TeamList players={court.teamB} alignRight /></div>
+                  </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <input
                       type="number"
@@ -1039,7 +1178,7 @@ function readPersistedBatchUiSettings() {
                         : 'border-white/10 bg-white/5 text-slate-100/90'
                     }`}
                   >
-                    <div className="font-medium">{player.name}</div>
+                    <PlayerNameRow name={player.name} />
                     <div className="text-xs opacity-80">{player.gender}</div>
                   </button>
                 );
@@ -1064,7 +1203,11 @@ function readPersistedBatchUiSettings() {
                   const secondName = activeBatch.players.find((player) => player.id === pair.playerIds[1])?.name ?? 'Player';
                   return (
                     <div key={pair.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
-                      <span className="font-medium text-white">{firstName} + {secondName}</span>
+                      <div className="flex items-center gap-2">
+                        <PlayerNameRow name={firstName} />
+                        <span className="text-slate-300/70">+</span>
+                        <PlayerNameRow name={secondName} />
+                      </div>
                       <button type="button" onClick={() => unlockSelectedPair(activeBatch.batchId, pair.id)} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
                         Unpair
                       </button>
@@ -1112,7 +1255,10 @@ function readPersistedBatchUiSettings() {
                       : 'border-white/10 bg-white/5 text-slate-100/90 hover:bg-white/10'
                   }`}
                 >
-                  {autoFillEnabled ? 'Auto-fill: On' : 'Auto-fill: Off'}
+                  <span className="inline-flex items-center gap-2">
+                    {autoFillEnabled ? <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.75)]" /> : null}
+                    {autoFillEnabled ? 'Auto-fill: On' : 'Auto-fill: Off'}
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -1134,7 +1280,7 @@ function readPersistedBatchUiSettings() {
             <div className="mt-4 space-y-3">
               {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">{queuePaused ? 'Queue paused.' : 'Queue is empty.'}</div> : null}
               {upcomingMatches.map((match, index) => (
-                <div key={match.id} className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">
+                <div key={match.id} className={`rounded-2xl border border-white/10 bg-white/5 p-4 text-sm ${queuePaused ? 'opacity-75' : ''}`}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <span className="w-7 rounded-full bg-black/25 py-1 text-center text-xs text-amber-200">{index + 1}</span>
@@ -1208,9 +1354,14 @@ function readPersistedBatchUiSettings() {
                         <div className={`rounded-full border px-3 py-1 text-xs ${court.isActive ? 'border-emerald-300/30 bg-emerald-500/10 text-emerald-100' : 'border-slate-300/20 bg-slate-900/30 text-slate-200/90'}`}>
                           {court.isActive ? 'Active' : 'Inactive'}
                         </div>
-                        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
-                          {formatTimer(court.startedAt, nowMs)}
-                        </div>
+                        {(() => {
+                          const timerTone = getTimerTone(court.startedAt, nowMs);
+                          return (
+                            <div className={`rounded-full border px-3 py-1 text-xs ${timerTone.className} ${timerTone.pulse ? 'animate-pulse' : ''}`}>
+                              {formatTimer(court.startedAt, nowMs)}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -1227,8 +1378,14 @@ function readPersistedBatchUiSettings() {
                       </div>
                     ) : court.status === 'live' ? (
                       <>
-                        <div className="mt-3 text-sm text-slate-200/90">Team A: {court.teamA.join(', ')}</div>
-                        <div className="mt-1 text-sm text-slate-200/90">Team B: {court.teamB.join(', ')}</div>
+                        <div className="mt-3 text-sm text-slate-200/90">
+                          <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team A</div>
+                          <div className="mt-2"><TeamList players={court.teamA} /></div>
+                        </div>
+                        <div className="mt-1 text-sm text-slate-200/90">
+                          <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team B</div>
+                          <div className="mt-2"><TeamList players={court.teamB} alignRight /></div>
+                        </div>
                         <div className="mt-3 grid gap-2 sm:grid-cols-2">
                           <input
                             type="number"
@@ -1324,7 +1481,7 @@ function readPersistedBatchUiSettings() {
                 {breakPlayers.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
                 {breakPlayers.map((player) => (
                   <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                    <span className="text-white">{player.name}</span>
+                      <PlayerNameRow name={player.name} />
                     <button
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
@@ -1343,7 +1500,7 @@ function readPersistedBatchUiSettings() {
               <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
                 {availableForCustom.map((player) => (
                   <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                    <span className="text-white">{player.name}</span>
+                      <PlayerNameRow name={player.name} />
                     <button
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
@@ -1426,7 +1583,7 @@ function readPersistedBatchUiSettings() {
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-slate-100/90">{player.gender}</div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium text-white">{player.name}</div>
+                          <PlayerNameRow name={player.name} />
                           <div className="text-xs text-slate-300/80">{player.status}</div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1484,7 +1641,11 @@ function readPersistedBatchUiSettings() {
                     onClick={() => onToggleCustomPlayer(id)}
                     className="rounded-full border border-amber-300/40 bg-amber-300/15 px-3 py-1 text-xs text-amber-100"
                   >
-                    {player.name} x
+                    <span className="inline-flex items-center gap-2">
+                      <Avatar name={player.name} />
+                      <span>{player.name}</span>
+                      <span>x</span>
+                    </span>
                   </button>
                 );
               })}
@@ -1508,7 +1669,7 @@ function readPersistedBatchUiSettings() {
                         : 'border-white/10 bg-white/5 text-slate-100/90'
                     }`}
                   >
-                    <div className="font-medium">{player.name}</div>
+                    <PlayerNameRow name={player.name} />
                     <div className="text-xs opacity-80">{player.gender}</div>
                   </button>
                 );
@@ -1518,7 +1679,26 @@ function readPersistedBatchUiSettings() {
             <div className="mt-4 text-xs text-slate-300/80">{customSelection.length}/4 selected</div>
             {customSelection.length === 4 ? (
               <div className="mt-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200/90">
-                Team 1: {activeBatch.players.find((player) => player.id === customSelection[0])?.name ?? '-'} + {activeBatch.players.find((player) => player.id === customSelection[1])?.name ?? '-'} | Team 2: {activeBatch.players.find((player) => player.id === customSelection[2])?.name ?? '-'} + {activeBatch.players.find((player) => player.id === customSelection[3])?.name ?? '-'}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.24em] text-slate-400/80">Team 1</div>
+                    <div className="mt-2 space-y-1">
+                      {[customSelection[0], customSelection[1]].map((id) => {
+                        const player = activeBatch.players.find((entry) => entry.id === id);
+                        return player ? <PlayerNameRow key={id} name={player.name} /> : null;
+                      })}
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-[10px] uppercase tracking-[0.24em] text-slate-400/80">Team 2</div>
+                    <div className="mt-2 space-y-1">
+                      {[customSelection[2], customSelection[3]].map((id) => {
+                        const player = activeBatch.players.find((entry) => entry.id === id);
+                        return player ? <PlayerNameRow key={id} name={player.name} alignRight /> : null;
+                      })}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -1625,10 +1805,8 @@ function TeamCard({ label, players, alignRight = false }: { label: string; playe
   return (
     <div className={`rounded-2xl border border-white/10 bg-black/20 p-3 ${alignRight ? 'text-right' : 'text-left'}`}>
       <div className="text-[11px] uppercase tracking-[0.28em] text-slate-400/80">{label}</div>
-      <div className="mt-2 space-y-1 text-sm text-white">
-        {players.map((player) => (
-          <div key={player} className="rounded-xl bg-white/5 px-3 py-2">{player}</div>
-        ))}
+      <div className="mt-2">
+        <TeamList players={players} alignRight={alignRight} />
       </div>
     </div>
   );

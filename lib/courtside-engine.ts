@@ -247,10 +247,12 @@ export function getLeaderboardEntries(snapshot: BatchSnapshot): LeaderboardEntry
 
   let currentRank = 0;
   let lastWins: number | null = null;
+  let lastGamesPlayed: number | null = null;
   entries.forEach((entry, index) => {
-    if (entry.wins !== lastWins) {
+    if (entry.wins !== lastWins || entry.gamesPlayed !== lastGamesPlayed) {
       currentRank = index + 1;
       lastWins = entry.wins;
+      lastGamesPlayed = entry.gamesPlayed;
     }
 
     entry.rank = currentRank;

@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { ArrowRight, Lock, Mail, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Lock, Mail } from 'lucide-react';
 
 export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: string }) {
   const router = useRouter();
@@ -44,11 +44,6 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
 
   return (
     <div className="mx-auto w-full max-w-xl rounded-[1.25rem] border border-white/10 bg-white/5 p-5 sm:p-6">
-      <div className="mb-6 flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-200/90">
-        <ShieldCheck className="h-5 w-5 text-amber-300" />
-        Shared admin access for event operators.
-      </div>
-
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>
           <label className="mb-2 block text-sm font-medium text-orange-100/90">Email</label>
@@ -87,7 +82,7 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
           disabled={isPending}
           className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 via-pink-500 to-purple-600 px-5 py-4 text-sm font-semibold text-white shadow-lg shadow-orange-950/30 transition hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70"
         >
-          {isPending ? 'Signing in...' : 'Enter Dashboard'}
+          {isPending ? 'Signing in...' : 'Sign In'}
           <ArrowRight className="h-4 w-4" />
         </button>
       </form>
