@@ -559,6 +559,24 @@ function readPersistedBatchUiSettings() {
   }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
 
   useEffect(() => {
+    if (!publicView || !activeNowCallingAnnouncement || activeNowCallingAnnouncement.type !== 'next-up') {
+      return;
+    }
+
+    const stillQueued = upcomingMatches.some((match) => match.id === activeNowCallingAnnouncement.matchId);
+    if (stillQueued) {
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      setActiveNowCallingAnnouncement(null);
+      setNowCallingQueue((current) => current.filter((entry) => entry.type !== 'next-up' || entry.matchId !== activeNowCallingAnnouncement.matchId));
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [activeNowCallingAnnouncement, publicView, upcomingMatches]);
+
+  useEffect(() => {
     if (!publicView || !activeNowCallingAnnouncement) {
       return;
     }
@@ -583,9 +601,9 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    void ensureReadyMatches(activeBatch.batchId, 6);
+    void ensureReadyMatches(activeBatch.batchId, 5);
     const generationId = window.setInterval(() => {
-      void ensureReadyMatches(activeBatch.batchId, 6);
+      void ensureReadyMatches(activeBatch.batchId, 5);
     }, 5000);
 
     return () => {
@@ -597,6 +615,7 @@ function readPersistedBatchUiSettings() {
     if (autoFillIntervalRef.current !== null) {
       window.clearInterval(autoFillIntervalRef.current);
       autoFillIntervalRef.current = null;
+      autoFillRunningRef.current = false;
     }
 
     if (publicView || scoreOnly || !autoFillEnabled || queuePaused) {
@@ -622,6 +641,7 @@ function readPersistedBatchUiSettings() {
         window.clearInterval(autoFillIntervalRef.current);
         autoFillIntervalRef.current = null;
       }
+      autoFillRunningRef.current = false;
     };
   }, [activeBatch.batchId, autoFillEnabled, publicView, queuePaused, scoreOnly]);
 
@@ -1496,7 +1516,7 @@ function readPersistedBatchUiSettings() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 6 when not paused.</div>
+                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 5 when not paused.</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1985,7 +2005,7 @@ function readPersistedBatchUiSettings() {
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                disabled={customSelection.length !== 4}
+                disabled={customSelection.length !== 4 || queueProcessing}
                 onClick={() => handleAddCustomToQueue('top')}
                 className="rounded-2xl bg-gradient-to-r from-orange-500 to-pink-500 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -1993,7 +2013,7 @@ function readPersistedBatchUiSettings() {
               </button>
               <button
                 type="button"
-                disabled={customSelection.length !== 4}
+                disabled={customSelection.length !== 4 || queueProcessing}
                 onClick={() => handleAddCustomToQueue('bottom')}
                 className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -2004,6 +2024,7 @@ function readPersistedBatchUiSettings() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
+                disabled={queueProcessing}
                 onClick={() => handleGenerateGenderCustom('M', 'top')}
                 className="rounded-2xl border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-100"
               >
@@ -2011,6 +2032,7 @@ function readPersistedBatchUiSettings() {
               </button>
               <button
                 type="button"
+                disabled={queueProcessing}
                 onClick={() => handleGenerateGenderCustom('M', 'bottom')}
                 className="rounded-2xl border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-100"
               >
@@ -2018,6 +2040,7 @@ function readPersistedBatchUiSettings() {
               </button>
               <button
                 type="button"
+                disabled={queueProcessing}
                 onClick={() => handleGenerateGenderCustom('F', 'top')}
                 className="rounded-2xl border border-fuchsia-300/40 bg-fuchsia-500/10 px-4 py-3 text-sm font-semibold text-fuchsia-100"
               >
@@ -2025,6 +2048,7 @@ function readPersistedBatchUiSettings() {
               </button>
               <button
                 type="button"
+                disabled={queueProcessing}
                 onClick={() => handleGenerateGenderCustom('F', 'bottom')}
                 className="rounded-2xl border border-fuchsia-300/40 bg-fuchsia-500/10 px-4 py-3 text-sm font-semibold text-fuchsia-100"
               >
