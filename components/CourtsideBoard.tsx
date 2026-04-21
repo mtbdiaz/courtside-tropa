@@ -68,7 +68,6 @@ export default function CourtsideBoard({
     unlockSelectedPair,
     moveQueueUnit,
     removeQueueMatch,
-    refreshQueueProcess,
     ensureReadyMatches,
     enqueueCustomMatch,
     generateSingleGenderCustomMatch,
@@ -362,6 +361,11 @@ function readPersistedBatchUiSettings() {
 
   const handleDeleteQueueMatch = async (sourceUnitIds: string[]) => {
     await removeQueueMatch(activeBatch.batchId, sourceUnitIds);
+  };
+
+  const handleGenerateOneQueue = async () => {
+    const target = Math.max(1, activeBatch.queuedMatches.length + 1);
+    await ensureReadyMatches(activeBatch.batchId, target);
   };
 
   const handleToggleBreak = (playerId: string) => {
@@ -1112,10 +1116,10 @@ function readPersistedBatchUiSettings() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => refreshQueueProcess(activeBatch.batchId)}
+                  onClick={handleGenerateOneQueue}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
-                  Refresh Queue
+                  Generate 1 Queue
                 </button>
                 <button
                   type="button"
