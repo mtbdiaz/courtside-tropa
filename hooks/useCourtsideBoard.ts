@@ -373,8 +373,16 @@ function chooseReadyMatchWithPairRules(
     teamB: [string, string];
   };
 
-  const availableById = new Map(availablePlayers.map((player) => [player.id, player]));
   const ordered = [...availablePlayers].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const playersByPairId = new Map<string, Player[]>();
+  for (const player of ordered) {
+    if (!player.pairId) {
+      continue;
+    }
+    const group = playersByPairId.get(player.pairId) ?? [];
+    group.push(player);
+    playersByPairId.set(player.pairId, group);
+  }
 
   const units: QueueUnitCandidate[] = [];
   const consumedPlayers = new Set<string>();
@@ -386,13 +394,7 @@ function chooseReadyMatchWithPairRules(
     }
 
     if (player.pairId) {
-      const partner = ordered.find(
-        (candidate) =>
-          candidate.id !== player.id &&
-          candidate.pairId === player.id &&
-          player.pairId === candidate.id &&
-          availableById.has(candidate.id),
-      );
+      const partner = (playersByPairId.get(player.pairId) ?? []).find((candidate) => candidate.id !== player.id);
       if (partner && !consumedPlayers.has(partner.id)) {
         units.push({
           kind: 'pair',
@@ -516,6 +518,148 @@ function chooseReadyMatchWithPairRules(
     teamA: selected.teamA,
     teamB: selected.teamB,
   };
+}
+
+function chooseGenderSpecificCustomMatch(
+  batchPlayers: Player[],
+  gender: Gender,
+  stats: ReturnType<typeof getPlayerStats>,
+  unavailableIds: Set<string>,
+): string[] | null {
+  const eligibleById = new Map<string, Player>();
+  for (const player of batchPlayers) {
+    if (player.status !== 'checked-in' || player.gender !== gender || unavailableIds.has(player.id)) {
+      continue;
+    }
+    eligibleById.set(player.id, player);
+  }
+
+  if (eligibleById.size < 4) {
+    return null;
+  }
+
+  const ordered = [...eligibleById.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const eligiblePlayersByPairId = new Map<string, Player[]>();
+  for (const player of ordered) {
+    if (!player.pairId) {
+      continue;
+    }
+    const group = eligiblePlayersByPairId.get(player.pairId) ?? [];
+    group.push(player);
+    eligiblePlayersByPairId.set(player.pairId, group);
+  }
+
+  type Unit = { kind: 'pair' | 'solo'; playerIds: string[]; order: number };
+  const units: Unit[] = [];
+  const consumed = new Set<string>();
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const player = ordered[index];
+    if (consumed.has(player.id)) {
+      continue;
+    }
+
+    if (player.pairId) {
+      // Mixed-gender or unavailable partner pairs are not eligible for gender-specific custom generation.
+      const pairGroup = batchPlayers.filter((candidate) => candidate.pairId === player.pairId);
+      const hasNonTargetGenderPartner = pairGroup.some((candidate) => candidate.id !== player.id && candidate.gender !== gender);
+      if (hasNonTargetGenderPartner) {
+        consumed.add(player.id);
+        continue;
+      }
+
+      const partner = (eligiblePlayersByPairId.get(player.pairId) ?? []).find((candidate) => candidate.id !== player.id);
+      if (!partner || consumed.has(partner.id)) {
+        consumed.add(player.id);
+        continue;
+      }
+
+      units.push({
+        kind: 'pair',
+        playerIds: [player.id, partner.id],
+        order: index,
+      });
+      consumed.add(player.id);
+      consumed.add(partner.id);
+      continue;
+    }
+
+    units.push({
+      kind: 'solo',
+      playerIds: [player.id],
+      order: index,
+    });
+    consumed.add(player.id);
+  }
+
+  if (units.length < 2) {
+    return null;
+  }
+
+  type Candidate = {
+    score: number;
+    depth: number;
+    orderScore: number;
+    ids: string[];
+  };
+  const candidates: Candidate[] = [];
+  const addCandidate = (ids: string[], orders: number[]) => {
+    candidates.push({
+      score: ids.reduce((sum, id) => sum + (stats.get(id)?.gamesPlayed ?? 0), 0),
+      depth: Math.max(...orders),
+      orderScore: orders.reduce((sum, value) => sum + value, 0),
+      ids,
+    });
+  };
+
+  const solos = units.filter((unit) => unit.kind === 'solo');
+  const pairs = units.filter((unit) => unit.kind === 'pair');
+
+  for (let i = 0; i < pairs.length; i += 1) {
+    for (let j = 0; j < solos.length - 1; j += 1) {
+      for (let k = j + 1; k < solos.length; k += 1) {
+        addCandidate(
+          [...pairs[i].playerIds, solos[j].playerIds[0], solos[k].playerIds[0]],
+          [pairs[i].order, solos[j].order, solos[k].order],
+        );
+      }
+    }
+  }
+
+  for (let i = 0; i < solos.length - 3; i += 1) {
+    for (let j = i + 1; j < solos.length - 2; j += 1) {
+      for (let k = j + 1; k < solos.length - 1; k += 1) {
+        for (let l = k + 1; l < solos.length; l += 1) {
+          addCandidate(
+            [solos[i].playerIds[0], solos[j].playerIds[0], solos[k].playerIds[0], solos[l].playerIds[0]],
+            [solos[i].order, solos[j].order, solos[k].order, solos[l].order],
+          );
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < pairs.length - 1; i += 1) {
+    for (let j = i + 1; j < pairs.length; j += 1) {
+      addCandidate([...pairs[i].playerIds, ...pairs[j].playerIds], [pairs[i].order, pairs[j].order]);
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => {
+    if (a.depth !== b.depth) {
+      return a.depth - b.depth;
+    }
+    if (a.orderScore !== b.orderScore) {
+      return a.orderScore - b.orderScore;
+    }
+    return a.score - b.score;
+  });
+
+  return candidates[0].ids;
 }
 
 function normalizeSnapshot(input: {
@@ -2265,27 +2409,15 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     );
     const queuedIds = new Set(batch.queuedMatches.flatMap((match) => match.playerIds));
 
-    const available = batch.players.filter(
-      (player) =>
-        player.status === 'checked-in' &&
-        player.gender === gender &&
-        !liveIds.has(player.id) &&
-        !queuedIds.has(player.id),
-    );
-
-    if (available.length < 4) {
+    const unavailableIds = new Set<string>([...liveIds, ...queuedIds]);
+    const stats = getPlayerStats(batch);
+    const selected = chooseGenderSpecificCustomMatch(batch.players, gender, stats, unavailableIds);
+    if (!selected || selected.length !== 4) {
       reportActionError(`Custom match failed: need at least 4 checked-in ${gender === 'M' ? 'male' : 'female'} players.`);
       return;
     }
 
-    const stats = getPlayerStats(batch);
-    const match = chooseFairReadyMatch(available, stats);
-    if (!match) {
-      reportActionError('Custom match failed: could not generate a fair match from eligible players.');
-      return;
-    }
-
-    await enqueueCustomMatch(batchId, [...match.teamA, ...match.teamB], placement);
+    await enqueueCustomMatch(batchId, selected, placement);
   }, [clearActionError, enqueueCustomMatch, reportActionError, snapshot.batches]);
 
   const fillIdleCourts = useCallback(async (batchId: BatchId) => {
