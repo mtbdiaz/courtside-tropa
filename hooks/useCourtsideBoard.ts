@@ -354,7 +354,168 @@ function chooseReadyMatchWithPairRules(
   availablePlayers: Player[],
   stats: ReturnType<typeof getPlayerStats>,
 ): { teamA: [string, string]; teamB: [string, string] } | null {
-  return chooseFairReadyMatch(availablePlayers, stats);
+  if (availablePlayers.length < 4) {
+    return null;
+  }
+
+  type QueueUnitCandidate = {
+    kind: 'pair' | 'solo';
+    order: number;
+    playerIds: [string, string] | [string];
+  };
+
+  type MatchCandidate = {
+    compositionPriority: 0 | 1 | 2;
+    queueDepthScore: number;
+    queueOrderScore: number;
+    fairnessScore: number;
+    teamA: [string, string];
+    teamB: [string, string];
+  };
+
+  const availableById = new Map(availablePlayers.map((player) => [player.id, player]));
+  const ordered = [...availablePlayers].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  const units: QueueUnitCandidate[] = [];
+  const consumedPlayers = new Set<string>();
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const player = ordered[index];
+    if (consumedPlayers.has(player.id)) {
+      continue;
+    }
+
+    if (player.pairId) {
+      const partner = ordered.find(
+        (candidate) =>
+          candidate.id !== player.id &&
+          candidate.pairId === player.id &&
+          player.pairId === candidate.id &&
+          availableById.has(candidate.id),
+      );
+      if (partner && !consumedPlayers.has(partner.id)) {
+        units.push({
+          kind: 'pair',
+          order: index,
+          playerIds: [player.id, partner.id],
+        });
+        consumedPlayers.add(player.id);
+        consumedPlayers.add(partner.id);
+        continue;
+      }
+    }
+
+    units.push({
+      kind: 'solo',
+      order: index,
+      playerIds: [player.id],
+    });
+    consumedPlayers.add(player.id);
+  }
+
+  const soloUnits = units.filter((unit): unit is QueueUnitCandidate & { kind: 'solo'; playerIds: [string] } => unit.kind === 'solo');
+  const pairUnits = units.filter((unit): unit is QueueUnitCandidate & { kind: 'pair'; playerIds: [string, string] } => unit.kind === 'pair');
+
+  const candidates: MatchCandidate[] = [];
+
+  const scorePlayers = (ids: string[]) =>
+    ids.reduce((sum, id) => sum + (stats.get(id)?.gamesPlayed ?? 0), 0);
+
+  const queueScores = (orders: number[]) => ({
+    queueDepthScore: Math.max(...orders),
+    queueOrderScore: orders.reduce((sum, value) => sum + value, 0),
+  });
+
+  // Priority 1: mixed composition (1 pair + 2 solos)
+  for (let i = 0; i < pairUnits.length; i += 1) {
+    const pair = pairUnits[i];
+    for (let j = 0; j < soloUnits.length - 1; j += 1) {
+      for (let k = j + 1; k < soloUnits.length; k += 1) {
+        const soloA = soloUnits[j];
+        const soloB = soloUnits[k];
+        const teamA = pair.playerIds;
+        const teamB: [string, string] = [soloA.playerIds[0], soloB.playerIds[0]];
+        const allIds = [...teamA, ...teamB];
+        const { queueDepthScore, queueOrderScore } = queueScores([pair.order, soloA.order, soloB.order]);
+        candidates.push({
+          compositionPriority: 0,
+          queueDepthScore,
+          queueOrderScore,
+          fairnessScore: scorePlayers(allIds),
+          teamA,
+          teamB,
+        });
+      }
+    }
+  }
+
+  // Priority 2: solo vs solo
+  for (let i = 0; i < soloUnits.length - 3; i += 1) {
+    for (let j = i + 1; j < soloUnits.length - 2; j += 1) {
+      for (let k = j + 1; k < soloUnits.length - 1; k += 1) {
+        for (let l = k + 1; l < soloUnits.length; l += 1) {
+          const a = soloUnits[i].playerIds[0];
+          const b = soloUnits[j].playerIds[0];
+          const c = soloUnits[k].playerIds[0];
+          const d = soloUnits[l].playerIds[0];
+          const { queueDepthScore, queueOrderScore } = queueScores([
+            soloUnits[i].order,
+            soloUnits[j].order,
+            soloUnits[k].order,
+            soloUnits[l].order,
+          ]);
+          candidates.push({
+            compositionPriority: 1,
+            queueDepthScore,
+            queueOrderScore,
+            fairnessScore: scorePlayers([a, b, c, d]),
+            teamA: [a, b],
+            teamB: [c, d],
+          });
+        }
+      }
+    }
+  }
+
+  // Priority 3: pair vs pair (last resort)
+  for (let i = 0; i < pairUnits.length - 1; i += 1) {
+    for (let j = i + 1; j < pairUnits.length; j += 1) {
+      const first = pairUnits[i];
+      const second = pairUnits[j];
+      const { queueDepthScore, queueOrderScore } = queueScores([first.order, second.order]);
+      candidates.push({
+        compositionPriority: 2,
+        queueDepthScore,
+        queueOrderScore,
+        fairnessScore: scorePlayers([...first.playerIds, ...second.playerIds]),
+        teamA: first.playerIds,
+        teamB: second.playerIds,
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => {
+    if (a.compositionPriority !== b.compositionPriority) {
+      return a.compositionPriority - b.compositionPriority;
+    }
+    if (a.queueDepthScore !== b.queueDepthScore) {
+      return a.queueDepthScore - b.queueDepthScore;
+    }
+    if (a.queueOrderScore !== b.queueOrderScore) {
+      return a.queueOrderScore - b.queueOrderScore;
+    }
+    return a.fairnessScore - b.fairnessScore;
+  });
+
+  const selected = candidates[0];
+  return {
+    teamA: selected.teamA,
+    teamB: selected.teamB,
+  };
 }
 
 function normalizeSnapshot(input: {
@@ -1498,59 +1659,47 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     const stats = getPlayerStats(batch);
     const available = batch.players.filter((player) => player.status === 'checked-in' && !reserved.has(player.id));
-    const needed = targetReadyMatches - readyRows.length;
-    const base = Date.now();
+    const next = chooseReadyMatchWithPairRules(available, stats);
+    if (!next) {
+      await loadFromDatabase();
+      return;
+    }
 
-    for (let index = 0; index < needed; index += 1) {
-      const next = chooseReadyMatchWithPairRules(available, stats);
-      if (!next) {
-        break;
-      }
+    const payload: {
+      batch_id: string;
+      court_id: null;
+      team1_player1_id: string;
+      team1_player2_id: string;
+      team2_player1_id: string;
+      team2_player2_id: string;
+      queue_position: number;
+      start_time: string;
+      status: 'queued';
+      score_team1: number;
+      score_team2: number;
+      match_type?: 'mixed' | 'custom';
+    } = {
+      batch_id: dbBatchId,
+      court_id: null,
+      team1_player1_id: next.teamA[0],
+      team1_player2_id: next.teamA[1],
+      team2_player1_id: next.teamB[0],
+      team2_player2_id: next.teamB[1],
+      queue_position: readyRows.length + 1,
+      start_time: nowIso(),
+      status: 'queued',
+      score_team1: 0,
+      score_team2: 0,
+    };
 
-      const payload: {
-        batch_id: string;
-        court_id: null;
-        team1_player1_id: string;
-        team1_player2_id: string;
-        team2_player1_id: string;
-        team2_player2_id: string;
-        queue_position: number;
-        start_time: string;
-        status: 'queued';
-        score_team1: number;
-        score_team2: number;
-        match_type?: 'mixed' | 'custom';
-      } = {
-        batch_id: dbBatchId,
-        court_id: null,
-        team1_player1_id: next.teamA[0],
-        team1_player2_id: next.teamA[1],
-        team2_player1_id: next.teamB[0],
-        team2_player2_id: next.teamB[1],
-        queue_position: readyRows.length + index + 1,
-        start_time: new Date(base + index * 1000).toISOString(),
-        status: 'queued',
-        score_team1: 0,
-        score_team2: 0,
-      };
+    if (supportsMatchTypeRef.current) {
+      payload.match_type = matchTypeFromTeams(batch, next);
+    }
 
-      if (supportsMatchTypeRef.current) {
-        payload.match_type = matchTypeFromTeams(batch, next);
-      }
-
-      const { error: insertError } = await supabase.from('matches').insert(payload);
-      if (insertError) {
-        reportActionError(`Queue generation failed: ${insertError.message}`);
-        return;
-      }
-
-      const used = new Set([...next.teamA, ...next.teamB]);
-      used.forEach((id) => reserved.add(id));
-      for (let i = available.length - 1; i >= 0; i -= 1) {
-        if (used.has(available[i].id)) {
-          available.splice(i, 1);
-        }
-      }
+    const { error: insertError } = await supabase.from('matches').insert(payload);
+    if (insertError) {
+      reportActionError(`Queue generation failed: ${insertError.message}`);
+      return;
     }
 
       await loadFromDatabase();
