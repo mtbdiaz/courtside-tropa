@@ -549,7 +549,10 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    const [nextAnnouncement, ...remaining] = nowCallingQueue;
+    const courtAssignedIndex = nowCallingQueue.findIndex((entry) => entry.type === 'court-assigned');
+    const announcementIndex = courtAssignedIndex >= 0 ? courtAssignedIndex : 0;
+    const nextAnnouncement = nowCallingQueue[announcementIndex];
+    const remaining = nowCallingQueue.filter((_, index) => index !== announcementIndex);
     const rafId = window.requestAnimationFrame(() => {
       setActiveNowCallingAnnouncement(nextAnnouncement);
       setNowCallingQueue(remaining);
@@ -696,7 +699,7 @@ function readPersistedBatchUiSettings() {
 
     setToggleBreakDisabledUntil((current) => ({
       ...current,
-      [playerId]: now + 300,
+      [playerId]: now + 1200,
     }));
 
     window.setTimeout(() => {
@@ -705,7 +708,7 @@ function readPersistedBatchUiSettings() {
         delete next[playerId];
         return next;
       });
-    }, 320);
+    }, 1250);
 
     void toggleBreak(activeBatch.batchId, playerId);
   };
