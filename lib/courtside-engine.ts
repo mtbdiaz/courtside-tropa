@@ -447,26 +447,9 @@ export function setPlayerStatus(snapshot: BatchSnapshot, playerId: string, statu
   player.updatedAt = now();
 
   if (status === 'break') {
-    next.queueOrder = next.queueOrder.filter((id) => id !== playerId && id !== player.pairId);
-    if (player.pairId) {
-      const pair = next.pairs.find((entry) => entry.id === player.pairId);
-      if (pair) {
-        const mateId = pair.playerIds.find((entry) => entry !== playerId);
-        if (mateId) {
-          const mate = next.players.find((entry) => entry.id === mateId);
-          if (mate) {
-            mate.status = 'break';
-            mate.updatedAt = now();
-          }
-        }
-      }
-    }
-  } else if (!next.queueOrder.includes(player.pairId ?? playerId)) {
-    if (player.pairId && next.pairs.some((pair) => pair.id === player.pairId)) {
-      next.queueOrder.push(player.pairId);
-    } else {
-      next.queueOrder.push(playerId);
-    }
+    next.queueOrder = next.queueOrder.filter((id) => id !== playerId);
+  } else if (!next.queueOrder.includes(playerId)) {
+    next.queueOrder.push(playerId);
   }
 
   next.lastUpdated = now();

@@ -201,11 +201,41 @@ function buildPairs(players: Player[]): Pair[] {
   return pairs;
 }
 
-function buildQueueOrder(players: Player[], activePlayerIds: Set<string>) {
-  return players
+function buildQueueOrder(players: Player[], pairs: Pair[], activePlayerIds: Set<string>) {
+  const pairIndex = new Map<string, Pair>();
+  for (const pair of pairs) {
+    pair.playerIds.forEach((id) => pairIndex.set(id, pair));
+  }
+
+  const queuedPlayers = players
     .filter((player) => player.status === 'checked-in' && !activePlayerIds.has(player.id))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .map((player) => player.id);
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  const queue: string[] = [];
+  const usedPairIds = new Set<string>();
+
+  for (const player of queuedPlayers) {
+    const pair = pairIndex.get(player.id);
+    if (!pair) {
+      queue.push(player.id);
+      continue;
+    }
+
+    if (usedPairIds.has(pair.id)) {
+      continue;
+    }
+
+    const allQueued = pair.playerIds.every((id) => queuedPlayers.some((entry) => entry.id === id));
+    if (!allQueued) {
+      queue.push(player.id);
+      continue;
+    }
+
+    usedPairIds.add(pair.id);
+    queue.push(pair.id);
+  }
+
+  return queue;
 }
 
 function toMatchPreview(match: MatchRow, playersById: Map<string, Player>, index: number): MatchPreview | null {
@@ -439,7 +469,7 @@ function normalizeSnapshot(input: {
     });
   }
 
-  const queueOrder = buildQueueOrder(players, activePlayerIds);
+  const queueOrder = buildQueueOrder(players, pairs, activePlayerIds);
 
   const courts = [...input.courts]
     .sort((a, b) => a.court_number - b.court_number)
