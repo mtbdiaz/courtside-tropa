@@ -362,6 +362,59 @@ function toMatchupKey(teamA: [string, string], teamB: [string, string]) {
   return [toTeamKey(teamA), toTeamKey(teamB)].sort().join('::');
 }
 
+type MatchTypeKey = 'pair-vs-pair' | 'pair-vs-mixed' | 'solo-vs-solo';
+
+function classifyMatchType(
+  teamA: [string, string],
+  teamB: [string, string],
+  pairMateByPlayerId: Map<string, string>,
+): MatchTypeKey {
+  const teamAIsPair = isLockedPairTeam(teamA, pairMateByPlayerId);
+  const teamBIsPair = isLockedPairTeam(teamB, pairMateByPlayerId);
+
+  if (teamAIsPair && teamBIsPair) {
+    return 'pair-vs-pair';
+  }
+
+  if (teamAIsPair || teamBIsPair) {
+    return 'pair-vs-mixed';
+  }
+
+  return 'solo-vs-solo';
+}
+
+function pickWeightedMatchType(availableTypes: MatchTypeKey[], recentTypes: MatchTypeKey[]): MatchTypeKey {
+  const uniqueAvailable = Array.from(new Set(availableTypes));
+  let pool = uniqueAvailable;
+
+  if (recentTypes.length >= 2 && recentTypes[0] === recentTypes[1] && pool.length > 1) {
+    pool = pool.filter((type) => type !== recentTypes[0]);
+  }
+
+  if (pool.length === 0) {
+    pool = uniqueAvailable;
+  }
+
+  const weights: Record<MatchTypeKey, number> = {
+    'pair-vs-pair': 40,
+    'pair-vs-mixed': 40,
+    'solo-vs-solo': 20,
+  };
+
+  const totalWeight = pool.reduce((sum, type) => sum + weights[type], 0);
+  const roll = Math.random() * totalWeight;
+
+  let cursor = 0;
+  for (const type of pool) {
+    cursor += weights[type];
+    if (roll <= cursor) {
+      return type;
+    }
+  }
+
+  return pool[0];
+}
+
 function getRecentCompletedMatches(batch: BatchSnapshot, limit: number) {
   return [...batch.history]
     .filter((entry) => entry.status === 'complete' && entry.playerIds.length === 4)
@@ -384,26 +437,39 @@ function chooseReadyMatchWithPairRules(
   }
 
   const availableById = new Map(availablePlayers.map((player) => [player.id, player]));
-  const lockedPairs: Array<[string, string]> = [];
+  const fullPairs: Array<[string, string]> = [];
+  const partialPairSoloIds: string[] = [];
   const seenPairKeys = new Set<string>();
 
   for (const pair of batch.pairs) {
-    const [firstId, secondId] = pair.playerIds;
-    if (!availableById.has(firstId) || !availableById.has(secondId)) {
+    const activeMembers = pair.playerIds.filter((id) => availableById.has(id));
+    if (activeMembers.length === 0) {
       continue;
     }
 
-    const key = toPairKey(firstId, secondId);
+    const key = toPairKey(pair.playerIds[0], pair.playerIds[1]);
     if (seenPairKeys.has(key)) {
       continue;
     }
-
     seenPairKeys.add(key);
-    const ids = [firstId, secondId].sort() as [string, string];
-    lockedPairs.push(ids);
+
+    if (activeMembers.length === 2) {
+      const ids = [activeMembers[0], activeMembers[1]].sort() as [string, string];
+      fullPairs.push(ids);
+      continue;
+    }
+
+    partialPairSoloIds.push(activeMembers[0]);
   }
 
-  const soloPlayers = availablePlayers.filter((player) => !pairMateByPlayerId.has(player.id));
+  const fullPairMemberIds = new Set(fullPairs.flatMap((pair) => pair));
+  const unpairedSoloIds = availablePlayers
+    .filter((player) => !pairMateByPlayerId.has(player.id))
+    .map((player) => player.id);
+  const soloPoolIds = Array.from(new Set([...unpairedSoloIds, ...partialPairSoloIds])).filter(
+    (id) => !fullPairMemberIds.has(id),
+  );
+
   const recentMatches = getRecentCompletedMatches(batch, 5);
   const recentMatchupKeys = new Set<string>();
   for (const entry of recentMatches) {
@@ -425,48 +491,52 @@ function chooseReadyMatchWithPairRules(
     }
   }
 
-  const candidateTeams: Array<{ teamA: [string, string]; teamB: [string, string] }> = [];
+  const candidateTeams: Array<{ teamA: [string, string]; teamB: [string, string]; type: MatchTypeKey }> = [];
 
-  if (lockedPairs.length >= 2) {
-    for (let i = 0; i < lockedPairs.length - 1; i += 1) {
-      for (let j = i + 1; j < lockedPairs.length; j += 1) {
-        candidateTeams.push({ teamA: lockedPairs[i], teamB: lockedPairs[j] });
+  if (fullPairs.length >= 2) {
+    for (let i = 0; i < fullPairs.length - 1; i += 1) {
+      for (let j = i + 1; j < fullPairs.length; j += 1) {
+        candidateTeams.push({ teamA: fullPairs[i], teamB: fullPairs[j], type: 'pair-vs-pair' });
       }
     }
-  } else if (lockedPairs.length === 1) {
-    const fixedPair = lockedPairs[0];
-    if (soloPlayers.length < 2) {
-      return null;
-    }
-    for (let i = 0; i < soloPlayers.length - 1; i += 1) {
-      for (let j = i + 1; j < soloPlayers.length; j += 1) {
-        const duo = [soloPlayers[i].id, soloPlayers[j].id].sort() as [string, string];
-        candidateTeams.push({ teamA: fixedPair, teamB: duo });
+  }
+
+  if (fullPairs.length >= 1 && soloPoolIds.length >= 2) {
+    for (const fixedPair of fullPairs) {
+      for (let i = 0; i < soloPoolIds.length - 1; i += 1) {
+        for (let j = i + 1; j < soloPoolIds.length; j += 1) {
+          const duo = [soloPoolIds[i], soloPoolIds[j]].sort() as [string, string];
+          if (duo.some((id) => fixedPair.includes(id))) {
+            continue;
+          }
+          candidateTeams.push({ teamA: fixedPair, teamB: duo, type: 'pair-vs-mixed' });
+        }
       }
     }
-  } else {
-    if (soloPlayers.length < 4) {
-      return null;
-    }
+  }
 
-    const ranked = [...soloPlayers].sort((a, b) => {
-      const gameDiff = (stats.get(a.id)?.gamesPlayed ?? 0) - (stats.get(b.id)?.gamesPlayed ?? 0);
+  if (soloPoolIds.length >= 4) {
+    const rankedSoloIds = [...soloPoolIds].sort((a, b) => {
+      const gameDiff = (stats.get(a)?.gamesPlayed ?? 0) - (stats.get(b)?.gamesPlayed ?? 0);
       if (gameDiff !== 0) {
         return gameDiff;
       }
-      return a.createdAt.localeCompare(b.createdAt);
+      const aCreated = availableById.get(a)?.createdAt ?? '';
+      const bCreated = availableById.get(b)?.createdAt ?? '';
+      return aCreated.localeCompare(bCreated);
     });
 
-    const pool = ranked.slice(0, Math.min(16, ranked.length));
+    const pool = rankedSoloIds.slice(0, Math.min(16, rankedSoloIds.length));
     for (let i = 0; i < pool.length - 3; i += 1) {
       for (let j = i + 1; j < pool.length - 2; j += 1) {
         for (let k = j + 1; k < pool.length - 1; k += 1) {
           for (let l = k + 1; l < pool.length; l += 1) {
-            const ids = [pool[i].id, pool[j].id, pool[k].id, pool[l].id] as [string, string, string, string];
+            const ids = [pool[i], pool[j], pool[k], pool[l]] as [string, string, string, string];
             for (const [teamA, teamB] of generateTeamings(ids)) {
               candidateTeams.push({
                 teamA: [teamA[0], teamA[1]].sort() as [string, string],
                 teamB: [teamB[0], teamB[1]].sort() as [string, string],
+                type: 'solo-vs-solo',
               });
             }
           }
@@ -480,7 +550,7 @@ function chooseReadyMatchWithPairRules(
   }
 
   const evaluate = (
-    candidate: { teamA: [string, string]; teamB: [string, string] },
+    candidate: { teamA: [string, string]; teamB: [string, string]; type: MatchTypeKey },
     strict: boolean,
   ) => {
     const playerIds = [...candidate.teamA, ...candidate.teamB];
@@ -510,14 +580,49 @@ function chooseReadyMatchWithPairRules(
       Number(hasRecentSoloTeammateRepeat) * 80 +
       Number(hasBackToBackPlayer) * 260;
 
+    const recentTypes: MatchTypeKey[] = [
+      ...batch.queuedMatches.slice(0, 2).map((entry) => classifyMatchType(
+        [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
+        [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
+        pairMateByPlayerId,
+      )),
+      ...recentMatches.map((entry) => classifyMatchType(
+        [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
+        [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
+        pairMateByPlayerId,
+      )),
+    ].slice(0, 5);
+
+    const typeRepeatPenalty =
+      Number(recentTypes[0] === candidate.type) * 30 +
+      Number(recentTypes[0] === candidate.type && recentTypes[1] === candidate.type) * 120;
+
     return {
-      score: priorityScore * 100 + balancePenalty * 35 + fallbackPenalty,
+      score: priorityScore * 100 + balancePenalty * 35 + fallbackPenalty + typeRepeatPenalty,
       candidate,
     };
   };
 
+  const recentTypes: MatchTypeKey[] = [
+    ...batch.queuedMatches.slice(0, 3).map((entry) => classifyMatchType(
+      [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
+      [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
+      pairMateByPlayerId,
+    )),
+    ...recentMatches.map((entry) => classifyMatchType(
+      [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
+      [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
+      pairMateByPlayerId,
+    )),
+  ].slice(0, 5);
+
+  const availableTypes = candidateTeams.map((entry) => entry.type);
+  const preferredType = pickWeightedMatchType(availableTypes, recentTypes);
+  const typedCandidates = candidateTeams.filter((entry) => entry.type === preferredType);
+  const prioritizedCandidates = typedCandidates.length > 0 ? typedCandidates : candidateTeams;
+
   let bestStrict: { score: number; candidate: { teamA: [string, string]; teamB: [string, string] } } | null = null;
-  for (const candidate of candidateTeams) {
+  for (const candidate of prioritizedCandidates) {
     const scored = evaluate(candidate, true);
     if (!scored) {
       continue;
@@ -532,7 +637,7 @@ function chooseReadyMatchWithPairRules(
   }
 
   let bestFallback: { score: number; candidate: { teamA: [string, string]; teamB: [string, string] } } | null = null;
-  for (const candidate of candidateTeams) {
+  for (const candidate of prioritizedCandidates) {
     const scored = evaluate(candidate, false);
     if (!scored) {
       continue;
@@ -1428,9 +1533,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     const nextStatus = player.status === 'break' ? 'checked-in' : 'break';
-    const pair = player.pairId ? batch.pairs.find((entry) => entry.id === player.pairId) : undefined;
-    const pairedIds = pair?.playerIds ?? [];
-    const targetIds = Array.from(new Set([playerId, ...pairedIds]));
+    const targetIds = [playerId];
 
     // Optimistic transition for instant UX while backend sync is batched.
     setSnapshot((current) => {

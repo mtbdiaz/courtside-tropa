@@ -1518,14 +1518,27 @@ function readPersistedBatchUiSettings() {
               <div className="mt-2 space-y-2 max-h-40 overflow-auto pr-1">
                 {activeBatch.pairs.length === 0 ? <div className="text-sm text-slate-300/80">No pairs.</div> : null}
                 {activeBatch.pairs.map((pair) => {
-                  const firstName = activeBatch.players.find((player) => player.id === pair.playerIds[0])?.name ?? 'Player';
-                  const secondName = activeBatch.players.find((player) => player.id === pair.playerIds[1])?.name ?? 'Player';
+                  const firstPlayer = activeBatch.players.find((player) => player.id === pair.playerIds[0]);
+                  const secondPlayer = activeBatch.players.find((player) => player.id === pair.playerIds[1]);
+                  const firstName = firstPlayer?.name ?? 'Player';
+                  const secondName = secondPlayer?.name ?? 'Player';
+                  const onBreakCount = [firstPlayer?.status, secondPlayer?.status].filter((status) => status === 'break').length;
+                  const pairStatusLabel = onBreakCount === 0 ? 'Checked In' : onBreakCount === 1 ? '1 On Break' : 'On Break';
+                  const pairStatusClass =
+                    onBreakCount === 0
+                      ? 'text-emerald-200/90'
+                      : onBreakCount === 1
+                        ? 'text-amber-200/90'
+                        : 'text-rose-200/90';
                   return (
                     <div key={pair.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
-                      <div className="flex items-center gap-2">
-                        <PlayerNameRow name={firstName} gender={getGenderForName(firstName)} />
-                        <span className="text-slate-300/70">+</span>
-                        <PlayerNameRow name={secondName} gender={getGenderForName(secondName)} />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <PlayerNameRow name={firstName} gender={getGenderForName(firstName)} />
+                          <span className="text-slate-300/70">+</span>
+                          <PlayerNameRow name={secondName} gender={getGenderForName(secondName)} />
+                        </div>
+                        <div className={`mt-1 text-xs ${pairStatusClass}`}>{pairStatusLabel}</div>
                       </div>
                       <button type="button" onClick={() => unlockSelectedPair(activeBatch.batchId, pair.id)} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">
                         Unpair
