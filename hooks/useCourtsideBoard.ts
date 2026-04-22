@@ -201,41 +201,11 @@ function buildPairs(players: Player[]): Pair[] {
   return pairs;
 }
 
-function buildQueueOrder(players: Player[], pairs: Pair[], activePlayerIds: Set<string>) {
-  const pairIndex = new Map<string, Pair>();
-  for (const pair of pairs) {
-    pair.playerIds.forEach((id) => pairIndex.set(id, pair));
-  }
-
-  const queuedPlayers = players
+function buildQueueOrder(players: Player[], activePlayerIds: Set<string>) {
+  return players
     .filter((player) => player.status === 'checked-in' && !activePlayerIds.has(player.id))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-
-  const queue: string[] = [];
-  const usedPairIds = new Set<string>();
-
-  for (const player of queuedPlayers) {
-    const pair = pairIndex.get(player.id);
-    if (!pair) {
-      queue.push(player.id);
-      continue;
-    }
-
-    if (usedPairIds.has(pair.id)) {
-      continue;
-    }
-
-    const allQueued = pair.playerIds.every((id) => queuedPlayers.some((entry) => entry.id === id));
-    if (!allQueued) {
-      queue.push(player.id);
-      continue;
-    }
-
-    usedPairIds.add(pair.id);
-    queue.push(pair.id);
-  }
-
-  return queue;
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((player) => player.id);
 }
 
 function toMatchPreview(match: MatchRow, playersById: Map<string, Player>, index: number): MatchPreview | null {
@@ -350,304 +320,11 @@ function matchTypeFromTeams(
   return 'mixed';
 }
 
-function toPairKey(a: string, b: string) {
-  return [a, b].sort().join('|');
-}
-
-function toTeamKey(team: [string, string]) {
-  return toPairKey(team[0], team[1]);
-}
-
-function toMatchupKey(teamA: [string, string], teamB: [string, string]) {
-  return [toTeamKey(teamA), toTeamKey(teamB)].sort().join('::');
-}
-
-type MatchTypeKey = 'pair-vs-pair' | 'pair-vs-mixed' | 'solo-vs-solo';
-
-function classifyMatchType(
-  teamA: [string, string],
-  teamB: [string, string],
-  pairMateByPlayerId: Map<string, string>,
-): MatchTypeKey {
-  const teamAIsPair = isLockedPairTeam(teamA, pairMateByPlayerId);
-  const teamBIsPair = isLockedPairTeam(teamB, pairMateByPlayerId);
-
-  if (teamAIsPair && teamBIsPair) {
-    return 'pair-vs-pair';
-  }
-
-  if (teamAIsPair || teamBIsPair) {
-    return 'pair-vs-mixed';
-  }
-
-  return 'solo-vs-solo';
-}
-
-function pickWeightedMatchType(availableTypes: MatchTypeKey[], recentTypes: MatchTypeKey[]): MatchTypeKey {
-  const uniqueAvailable = Array.from(new Set(availableTypes));
-  let pool = uniqueAvailable;
-
-  if (recentTypes.length >= 2 && recentTypes[0] === recentTypes[1] && pool.length > 1) {
-    pool = pool.filter((type) => type !== recentTypes[0]);
-  }
-
-  if (pool.length === 0) {
-    pool = uniqueAvailable;
-  }
-
-  const weights: Record<MatchTypeKey, number> = {
-    'pair-vs-pair': 40,
-    'pair-vs-mixed': 40,
-    'solo-vs-solo': 20,
-  };
-
-  const totalWeight = pool.reduce((sum, type) => sum + weights[type], 0);
-  const roll = Math.random() * totalWeight;
-
-  let cursor = 0;
-  for (const type of pool) {
-    cursor += weights[type];
-    if (roll <= cursor) {
-      return type;
-    }
-  }
-
-  return pool[0];
-}
-
-function getRecentCompletedMatches(batch: BatchSnapshot, limit: number) {
-  return [...batch.history]
-    .filter((entry) => entry.status === 'complete' && entry.playerIds.length === 4)
-    .sort((a, b) => (b.endedAt ?? b.startedAt).localeCompare(a.endedAt ?? a.startedAt))
-    .slice(0, limit);
-}
-
-function isLockedPairTeam(team: [string, string], pairMateByPlayerId: Map<string, string>) {
-  return pairMateByPlayerId.get(team[0]) === team[1] && pairMateByPlayerId.get(team[1]) === team[0];
-}
-
 function chooseReadyMatchWithPairRules(
-  batch: BatchSnapshot,
   availablePlayers: Player[],
   stats: ReturnType<typeof getPlayerStats>,
-  pairMateByPlayerId: Map<string, string>,
 ): { teamA: [string, string]; teamB: [string, string] } | null {
-  if (availablePlayers.length < 4) {
-    return null;
-  }
-
-  const availableById = new Map(availablePlayers.map((player) => [player.id, player]));
-  const fullPairs: Array<[string, string]> = [];
-  const partialPairSoloIds: string[] = [];
-  const seenPairKeys = new Set<string>();
-
-  for (const pair of batch.pairs) {
-    const activeMembers = pair.playerIds.filter((id) => availableById.has(id));
-    if (activeMembers.length === 0) {
-      continue;
-    }
-
-    const key = toPairKey(pair.playerIds[0], pair.playerIds[1]);
-    if (seenPairKeys.has(key)) {
-      continue;
-    }
-    seenPairKeys.add(key);
-
-    if (activeMembers.length === 2) {
-      const ids = [activeMembers[0], activeMembers[1]].sort() as [string, string];
-      fullPairs.push(ids);
-      continue;
-    }
-
-    partialPairSoloIds.push(activeMembers[0]);
-  }
-
-  const fullPairMemberIds = new Set(fullPairs.flatMap((pair) => pair));
-  const unpairedSoloIds = availablePlayers
-    .filter((player) => !pairMateByPlayerId.has(player.id))
-    .map((player) => player.id);
-  const soloPoolIds = Array.from(new Set([...unpairedSoloIds, ...partialPairSoloIds])).filter(
-    (id) => !fullPairMemberIds.has(id),
-  );
-
-  const recentMatches = getRecentCompletedMatches(batch, 5);
-  const recentMatchupKeys = new Set<string>();
-  for (const entry of recentMatches) {
-    const teamA = [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string];
-    const teamB = [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string];
-    recentMatchupKeys.add(toMatchupKey(teamA, teamB));
-  }
-
-  const lastMatchPlayerIds = new Set<string>(recentMatches[0]?.playerIds ?? []);
-  const recentSoloTeammates = new Set<string>();
-  for (const entry of recentMatches.slice(0, 3)) {
-    const teamA = [entry.playerIds[0], entry.playerIds[1]] as [string, string];
-    const teamB = [entry.playerIds[2], entry.playerIds[3]] as [string, string];
-    if (!isLockedPairTeam(teamA, pairMateByPlayerId)) {
-      recentSoloTeammates.add(toPairKey(teamA[0], teamA[1]));
-    }
-    if (!isLockedPairTeam(teamB, pairMateByPlayerId)) {
-      recentSoloTeammates.add(toPairKey(teamB[0], teamB[1]));
-    }
-  }
-
-  const candidateTeams: Array<{ teamA: [string, string]; teamB: [string, string]; type: MatchTypeKey }> = [];
-
-  if (fullPairs.length >= 2) {
-    for (let i = 0; i < fullPairs.length - 1; i += 1) {
-      for (let j = i + 1; j < fullPairs.length; j += 1) {
-        candidateTeams.push({ teamA: fullPairs[i], teamB: fullPairs[j], type: 'pair-vs-pair' });
-      }
-    }
-  }
-
-  if (fullPairs.length >= 1 && soloPoolIds.length >= 2) {
-    for (const fixedPair of fullPairs) {
-      for (let i = 0; i < soloPoolIds.length - 1; i += 1) {
-        for (let j = i + 1; j < soloPoolIds.length; j += 1) {
-          const duo = [soloPoolIds[i], soloPoolIds[j]].sort() as [string, string];
-          if (duo.some((id) => fixedPair.includes(id))) {
-            continue;
-          }
-          candidateTeams.push({ teamA: fixedPair, teamB: duo, type: 'pair-vs-mixed' });
-        }
-      }
-    }
-  }
-
-  if (soloPoolIds.length >= 4) {
-    const rankedSoloIds = [...soloPoolIds].sort((a, b) => {
-      const gameDiff = (stats.get(a)?.gamesPlayed ?? 0) - (stats.get(b)?.gamesPlayed ?? 0);
-      if (gameDiff !== 0) {
-        return gameDiff;
-      }
-      const aCreated = availableById.get(a)?.createdAt ?? '';
-      const bCreated = availableById.get(b)?.createdAt ?? '';
-      return aCreated.localeCompare(bCreated);
-    });
-
-    const pool = rankedSoloIds.slice(0, Math.min(16, rankedSoloIds.length));
-    for (let i = 0; i < pool.length - 3; i += 1) {
-      for (let j = i + 1; j < pool.length - 2; j += 1) {
-        for (let k = j + 1; k < pool.length - 1; k += 1) {
-          for (let l = k + 1; l < pool.length; l += 1) {
-            const ids = [pool[i], pool[j], pool[k], pool[l]] as [string, string, string, string];
-            for (const [teamA, teamB] of generateTeamings(ids)) {
-              candidateTeams.push({
-                teamA: [teamA[0], teamA[1]].sort() as [string, string],
-                teamB: [teamB[0], teamB[1]].sort() as [string, string],
-                type: 'solo-vs-solo',
-              });
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (candidateTeams.length === 0) {
-    return null;
-  }
-
-  const evaluate = (
-    candidate: { teamA: [string, string]; teamB: [string, string]; type: MatchTypeKey },
-    strict: boolean,
-  ) => {
-    const playerIds = [...candidate.teamA, ...candidate.teamB];
-    if (new Set(playerIds).size !== 4) {
-      return null;
-    }
-
-    const teamAIsLockedPair = isLockedPairTeam(candidate.teamA, pairMateByPlayerId);
-    const teamBIsLockedPair = isLockedPairTeam(candidate.teamB, pairMateByPlayerId);
-    const hasRecentSoloTeammateRepeat =
-      (!teamAIsLockedPair && recentSoloTeammates.has(toPairKey(candidate.teamA[0], candidate.teamA[1]))) ||
-      (!teamBIsLockedPair && recentSoloTeammates.has(toPairKey(candidate.teamB[0], candidate.teamB[1])));
-    const hasRecentMatchupRepeat = recentMatchupKeys.has(toMatchupKey(candidate.teamA, candidate.teamB));
-    const hasBackToBackPlayer = playerIds.some((id) => lastMatchPlayerIds.has(id));
-
-    if (strict && (hasRecentMatchupRepeat || hasRecentSoloTeammateRepeat || hasBackToBackPlayer)) {
-      return null;
-    }
-
-    const teamAGames = ((stats.get(candidate.teamA[0])?.gamesPlayed ?? 0) + (stats.get(candidate.teamA[1])?.gamesPlayed ?? 0)) / 2;
-    const teamBGames = ((stats.get(candidate.teamB[0])?.gamesPlayed ?? 0) + (stats.get(candidate.teamB[1])?.gamesPlayed ?? 0)) / 2;
-    const priorityScore = teamAGames + teamBGames;
-    const balancePenalty = Math.abs(teamAGames - teamBGames);
-
-    const fallbackPenalty =
-      Number(hasRecentMatchupRepeat) * 220 +
-      Number(hasRecentSoloTeammateRepeat) * 80 +
-      Number(hasBackToBackPlayer) * 260;
-
-    const recentTypes: MatchTypeKey[] = [
-      ...batch.queuedMatches.slice(0, 2).map((entry) => classifyMatchType(
-        [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
-        [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
-        pairMateByPlayerId,
-      )),
-      ...recentMatches.map((entry) => classifyMatchType(
-        [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
-        [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
-        pairMateByPlayerId,
-      )),
-    ].slice(0, 5);
-
-    const typeRepeatPenalty =
-      Number(recentTypes[0] === candidate.type) * 30 +
-      Number(recentTypes[0] === candidate.type && recentTypes[1] === candidate.type) * 120;
-
-    return {
-      score: priorityScore * 100 + balancePenalty * 35 + fallbackPenalty + typeRepeatPenalty,
-      candidate,
-    };
-  };
-
-  const recentTypes: MatchTypeKey[] = [
-    ...batch.queuedMatches.slice(0, 3).map((entry) => classifyMatchType(
-      [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
-      [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
-      pairMateByPlayerId,
-    )),
-    ...recentMatches.map((entry) => classifyMatchType(
-      [entry.playerIds[0], entry.playerIds[1]].sort() as [string, string],
-      [entry.playerIds[2], entry.playerIds[3]].sort() as [string, string],
-      pairMateByPlayerId,
-    )),
-  ].slice(0, 5);
-
-  const availableTypes = candidateTeams.map((entry) => entry.type);
-  const preferredType = pickWeightedMatchType(availableTypes, recentTypes);
-  const typedCandidates = candidateTeams.filter((entry) => entry.type === preferredType);
-  const prioritizedCandidates = typedCandidates.length > 0 ? typedCandidates : candidateTeams;
-
-  let bestStrict: { score: number; candidate: { teamA: [string, string]; teamB: [string, string] } } | null = null;
-  for (const candidate of prioritizedCandidates) {
-    const scored = evaluate(candidate, true);
-    if (!scored) {
-      continue;
-    }
-    if (!bestStrict || scored.score < bestStrict.score) {
-      bestStrict = scored;
-    }
-  }
-
-  if (bestStrict) {
-    return bestStrict.candidate;
-  }
-
-  let bestFallback: { score: number; candidate: { teamA: [string, string]; teamB: [string, string] } } | null = null;
-  for (const candidate of prioritizedCandidates) {
-    const scored = evaluate(candidate, false);
-    if (!scored) {
-      continue;
-    }
-    if (!bestFallback || scored.score < bestFallback.score) {
-      bestFallback = scored;
-    }
-  }
-
-  return bestFallback?.candidate ?? null;
+  return chooseFairReadyMatch(availablePlayers, stats);
 }
 
 function normalizeSnapshot(input: {
@@ -762,7 +439,7 @@ function normalizeSnapshot(input: {
     });
   }
 
-  const queueOrder = buildQueueOrder(players, pairs, activePlayerIds);
+  const queueOrder = buildQueueOrder(players, activePlayerIds);
 
   const courts = [...input.courts]
     .sort((a, b) => a.court_number - b.court_number)
@@ -1790,17 +1467,12 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     const stats = getPlayerStats(batch);
-    const pairMateByPlayerId = new Map<string, string>();
-    for (const pair of batch.pairs) {
-      pairMateByPlayerId.set(pair.playerIds[0], pair.playerIds[1]);
-      pairMateByPlayerId.set(pair.playerIds[1], pair.playerIds[0]);
-    }
     const available = batch.players.filter((player) => player.status === 'checked-in' && !reserved.has(player.id));
     const needed = targetReadyMatches - readyRows.length;
     const base = Date.now();
 
     for (let index = 0; index < needed; index += 1) {
-      const next = chooseReadyMatchWithPairRules(batch, available, stats, pairMateByPlayerId);
+      const next = chooseReadyMatchWithPairRules(available, stats);
       if (!next) {
         break;
       }
