@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BatchId, Gender } from '@/types/courtside';
@@ -269,6 +269,10 @@ function readPersistedBatchUiSettings() {
     fillIdleCourtsRef.current = fillIdleCourts;
   }, [fillIdleCourts]);
 
+  const deferredPlayerSearch = useDeferredValue(playerSearch);
+  const deferredCustomSearch = useDeferredValue(customSearch);
+  const deferredPairSearch = useDeferredValue(pairSearch);
+
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -351,7 +355,7 @@ function readPersistedBatchUiSettings() {
   const getGenderForName = (name: string) => playerGenderByName.get(name);
 
   const filteredPlayers = useMemo(() => {
-    const query = playerSearch.trim().toLowerCase();
+    const query = deferredPlayerSearch.trim().toLowerCase();
     if (!query) {
       return sortedPlayers;
     }
@@ -363,10 +367,10 @@ function readPersistedBatchUiSettings() {
         player.status.toLowerCase().includes(query)
       );
     });
-  }, [playerSearch, sortedPlayers]);
+  }, [deferredPlayerSearch, sortedPlayers]);
 
   const customSearchResults = useMemo(() => {
-    const query = customSearch.trim().toLowerCase();
+    const query = deferredCustomSearch.trim().toLowerCase();
     if (!query) {
       return availableForCustom;
     }
@@ -374,10 +378,10 @@ function readPersistedBatchUiSettings() {
     return availableForCustom
       .filter((player) => player.name.toLowerCase().includes(query))
       .slice(0, 10);
-  }, [availableForCustom, customSearch]);
+  }, [availableForCustom, deferredCustomSearch]);
 
   const pairSearchResults = useMemo(() => {
-    const query = pairSearch.trim().toLowerCase();
+    const query = deferredPairSearch.trim().toLowerCase();
     if (!query) {
       return [];
     }
@@ -386,7 +390,7 @@ function readPersistedBatchUiSettings() {
       .filter((player) => player.name.toLowerCase().includes(query))
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 30);
-  }, [activeBatch.players, pairSearch]);
+  }, [activeBatch.players, deferredPairSearch]);
 
   const liveCourts = useMemo(
     () => activeBatch.courts.filter((court) => court.status === 'live'),
@@ -537,7 +541,7 @@ function readPersistedBatchUiSettings() {
   }, [isReady, publicView, upcomingMatches]);
 
   useEffect(() => {
-    if (!publicView || !activeNowCallingAnnouncement || activeNowCallingAnnouncement.type !== 'next-up') {
+    if (!publicView || !activeNowCallingAnnouncement || activeNowCallingAnnouncement.type === 'court-assigned') {
       return;
     }
 

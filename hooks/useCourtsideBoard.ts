@@ -923,6 +923,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const [activeModes, setActiveModes] = useState<Record<BatchId, MatchMode>>({ 1: 'mixed', 2: 'mixed' });
   const loadInFlightRef = useRef(false);
   const loadAgainRef = useRef(false);
+  const loadRevisionRef = useRef(0);
   const queueMutationLockRef = useRef(false);
   const pendingPlayerStatusRef = useRef<Map<string, 'checked-in' | 'break'>>(new Map());
   const toggleSyncTimerRef = useRef<number | null>(null);
@@ -972,6 +973,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     loadInFlightRef.current = true;
+    const loadRevision = ++loadRevisionRef.current;
 
     try {
       const isFirstLoad = !isReady;
@@ -1058,9 +1060,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         return;
       }
 
-      if (sessionData.session?.user?.email) {
-        setAuthEmail(sessionData.session.user.email);
-      }
+      setAuthEmail(sessionData.session?.user?.email ?? null);
 
       let batches = (batchesData ?? []) as BatchRow[];
       const players = (playersData ?? []) as PlayerRow[];
@@ -1228,6 +1228,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
             }),
           };
         }
+      }
+
+      if (loadRevision !== loadRevisionRef.current) {
+        return;
       }
 
       setSnapshot((current) => ({
