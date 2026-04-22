@@ -537,6 +537,23 @@ function readPersistedBatchUiSettings() {
   }, [isReady, publicView, upcomingMatches]);
 
   useEffect(() => {
+    if (!publicView || !activeNowCallingAnnouncement || activeNowCallingAnnouncement.type !== 'next-up') {
+      return;
+    }
+
+    const hasQueuedCourtAssignment = nowCallingQueue.some((entry) => entry.type === 'court-assigned');
+    if (!hasQueuedCourtAssignment) {
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      setActiveNowCallingAnnouncement(null);
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
+
+  useEffect(() => {
     if (!publicView) {
       const rafId = window.requestAnimationFrame(() => {
         setActiveNowCallingAnnouncement(null);
