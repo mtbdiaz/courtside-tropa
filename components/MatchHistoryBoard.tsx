@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { BatchId } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
 
 export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatchId?: BatchId }) {
-  const { activeBatch, isReady, setActiveBatchId, editScore } = useCourtsideBoard(initialBatchId);
+  const router = useRouter();
+  const { activeBatch, isReady, setActiveBatchId, editScore, signOut } = useCourtsideBoard(initialBatchId);
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [scoreA, setScoreA] = useState('');
   const [scoreB, setScoreB] = useState('');
@@ -54,6 +55,12 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
     setScoreB('');
   };
 
+  const handleLogout = async () => {
+    await signOut();
+    router.replace('/');
+    router.refresh();
+  };
+
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
       <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
@@ -77,9 +84,13 @@ export default function MatchHistoryBoard({ initialBatchId = 1 }: { initialBatch
                 Batch {batchId}
               </button>
             ))}
-            <Link href="/dashboard" className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90">
-              Back to dashboard
-            </Link>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="relative z-10 touch-manipulation rounded-full border border-rose-300/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-100"
+            >
+              Log Out
+            </button>
           </div>
         </div>
         <div className="mt-4 text-xs uppercase tracking-[0.2em] text-slate-300/80">Total matches: {totalMatches}</div>

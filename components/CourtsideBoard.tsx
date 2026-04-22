@@ -1201,9 +1201,14 @@ function readPersistedBatchUiSettings() {
                   Batch {batchId}
                 </button>
               ))}
-              <Link href="/dashboard" className="relative z-10 touch-manipulation rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10">
-                Back to dashboard
-              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex items-center gap-2 rounded-full border border-rose-300/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-100"
+              >
+                <LogOut className="h-4 w-4" />
+                Log Out
+              </button>
             </div>
           </div>
         </section>
