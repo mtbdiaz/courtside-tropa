@@ -261,6 +261,7 @@ function readPersistedBatchUiSettings() {
   const autoFillIntervalRef = useRef<number | null>(null);
   const fillIdleCourtsRef = useRef(fillIdleCourts);
   const seenLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
+  const announcedLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
   const liveCourtTrackerInitializedRef = useRef(false);
   const previousNowCallingMatchIdRef = useRef<string | null>(null);
   const nowCallingMatchTrackerInitializedRef = useRef(false);
@@ -436,6 +437,7 @@ function readPersistedBatchUiSettings() {
     if (!publicView) {
       liveCourtTrackerInitializedRef.current = false;
       seenLiveCourtSignatureByIdRef.current = {};
+      announcedLiveCourtSignatureByIdRef.current = {};
       return;
     }
 
@@ -448,7 +450,8 @@ function readPersistedBatchUiSettings() {
       if (court.status !== 'live') {
         continue;
       }
-      currentLiveCourtSignatureById[court.id] = `${court.status}:${court.sourceUnitIds.join('|')}`;
+      const sortedIds = [...court.sourceUnitIds].sort();
+      currentLiveCourtSignatureById[court.id] = `${court.status}:${sortedIds.join('|')}`;
     }
 
     if (!liveCourtTrackerInitializedRef.current) {
@@ -465,8 +468,12 @@ function readPersistedBatchUiSettings() {
 
       const nextSignature = currentLiveCourtSignatureById[court.id];
       const previousSignature = seenLiveCourtSignatureByIdRef.current[court.id];
+      const previouslyAnnouncedSignature = announcedLiveCourtSignatureByIdRef.current[court.id];
       if (nextSignature !== previousSignature) {
         if (!hasCompleteTeams(court.teamA, court.teamB)) {
+          continue;
+        }
+        if (previouslyAnnouncedSignature === nextSignature) {
           continue;
         }
         newAnnouncements.push({
@@ -476,6 +483,14 @@ function readPersistedBatchUiSettings() {
           teamA: [...court.teamA],
           teamB: [...court.teamB],
         });
+        announcedLiveCourtSignatureByIdRef.current[court.id] = nextSignature;
+      }
+    }
+
+    const liveCourtIds = new Set(Object.keys(currentLiveCourtSignatureById));
+    for (const courtId of Object.keys(announcedLiveCourtSignatureByIdRef.current)) {
+      if (!liveCourtIds.has(courtId)) {
+        delete announcedLiveCourtSignatureByIdRef.current[courtId];
       }
     }
 
