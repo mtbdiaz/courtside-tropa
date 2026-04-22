@@ -2025,7 +2025,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
             .from('players')
             .update({
               created_at: new Date(base + index * 1000).toISOString(),
-              status: 'break',
+              status: 'checked-in',
             })
             .eq('id', id)
             .eq('batch_id', withBatchDbId(batchId)),
