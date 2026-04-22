@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { resolvePostLoginPath } from '@/lib/auth-role';
 import { ArrowRight, Lock, Mail } from 'lucide-react';
 
 export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: string }) {
@@ -16,7 +17,7 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
     const supabase = createSupabaseBrowserClient();
     void supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
-        router.replace(nextPath);
+        router.replace(resolvePostLoginPath(data.session.user.email, nextPath));
       }
     });
   }, [nextPath, router]);
@@ -26,7 +27,7 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
     setError('');
 
     const supabase = createSupabaseBrowserClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -36,8 +37,10 @@ export default function LoginPanel({ nextPath = '/dashboard' }: { nextPath?: str
       return;
     }
 
+    const destination = resolvePostLoginPath(signInData.user?.email ?? email, nextPath);
+
     startTransition(() => {
-      router.replace(nextPath);
+      router.replace(destination);
       router.refresh();
     });
   };

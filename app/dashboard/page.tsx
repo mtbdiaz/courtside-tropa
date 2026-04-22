@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { isScorerEmail } from '@/lib/auth-role';
 import Header from '../components/Header';
 import CourtsideBoard from '@/components/CourtsideBoard';
 
@@ -9,6 +10,10 @@ export default async function DashboardPage() {
 
   if (!data.user) {
     redirect('/?next=/dashboard');
+  }
+
+  if (isScorerEmail(data.user.email)) {
+    redirect('/dashboard/score');
   }
 
   return (

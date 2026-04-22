@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { isScorerEmail } from '@/lib/auth-role';
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -30,13 +31,24 @@ export async function proxy(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith('/dashboard') && !user) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = '/';
-    redirectUrl.searchParams.set('next', '/dashboard');
+    redirectUrl.searchParams.set('next', request.nextUrl.pathname);
     return NextResponse.redirect(redirectUrl);
+  }
+
+  if (user && isScorerEmail(user.email)) {
+    const isDashboardPath = request.nextUrl.pathname.startsWith('/dashboard');
+    const isScorePath = request.nextUrl.pathname.startsWith('/dashboard/score');
+    if (isDashboardPath && !isScorePath) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = '/dashboard/score';
+      redirectUrl.search = '';
+      return NextResponse.redirect(redirectUrl);
+    }
   }
 
   if (request.nextUrl.pathname === '/' && user) {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = '/dashboard';
+    redirectUrl.pathname = isScorerEmail(user.email) ? '/dashboard/score' : '/dashboard';
     return NextResponse.redirect(redirectUrl);
   }
 
