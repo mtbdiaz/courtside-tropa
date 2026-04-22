@@ -1103,6 +1103,28 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
           ? ([1, 2] as BatchId[]).find((batchId) => hasData(batchId)) ?? initialBatchId
           : initialBatchId);
 
+      const pendingStatuses = pendingPlayerStatusRef.current;
+      if (pendingStatuses.size > 0) {
+        for (const batchId of [1, 2] as BatchId[]) {
+          const batchSnapshot = next.batches[batchId];
+          next.batches[batchId] = {
+            ...batchSnapshot,
+            players: batchSnapshot.players.map((player) => {
+              const pending = pendingStatuses.get(player.id);
+              if (!pending) {
+                return player;
+              }
+
+              return {
+                ...player,
+                status: pending,
+                updatedAt: nowIso(),
+              };
+            }),
+          };
+        }
+      }
+
       setSnapshot((current) => ({
         ...next,
         activeBatchId: isFirstLoad ? nextActiveBatchId : current.activeBatchId,

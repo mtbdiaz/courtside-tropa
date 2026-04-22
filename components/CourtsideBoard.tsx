@@ -1557,7 +1557,7 @@ function readPersistedBatchUiSettings() {
                 <button
                   type="button"
                   onClick={handleGenerateOneQueue}
-                  disabled={queuePaused || queueProcessing || activeBatch.queuedMatches.length >= 5 || batchCounts.checkedIn < 4}
+                  disabled={queueProcessing || activeBatch.queuedMatches.length >= 5 || batchCounts.checkedIn < 4}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
                   Generate 1 Queue
