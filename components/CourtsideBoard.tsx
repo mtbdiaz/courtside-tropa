@@ -618,7 +618,7 @@ function readPersistedBatchUiSettings() {
       autoFillRunningRef.current = false;
     }
 
-    if (publicView || scoreOnly || !autoFillEnabled || queuePaused) {
+    if (publicView || scoreOnly || !autoFillEnabled) {
       return;
     }
 
@@ -643,7 +643,7 @@ function readPersistedBatchUiSettings() {
       }
       autoFillRunningRef.current = false;
     };
-  }, [activeBatch.batchId, autoFillEnabled, publicView, queuePaused, scoreOnly]);
+  }, [activeBatch.batchId, autoFillEnabled, publicView, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);

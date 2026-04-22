@@ -1617,7 +1617,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const lockAcquired = await acquireQueueLock();
+    const lockAcquired = await acquireQueueLock(5000);
     if (!lockAcquired) {
       return;
     }
