@@ -451,7 +451,7 @@ function readPersistedBatchUiSettings() {
         continue;
       }
       const sortedIds = [...court.sourceUnitIds].sort();
-      currentLiveCourtSignatureById[court.id] = `${court.status}:${sortedIds.join('|')}`;
+      currentLiveCourtSignatureById[court.id] = `${court.status}:${court.matchId ?? 'none'}:${sortedIds.join('|')}`;
     }
 
     if (!liveCourtTrackerInitializedRef.current) {
@@ -896,10 +896,7 @@ function readPersistedBatchUiSettings() {
     const nextOpenCourt = activeBatch.courts.find((court) => court.status === 'idle' && court.isActive);
     const nextTwoMatches = upcomingMatches.slice(0, 2);
     const nextMatch = nextTwoMatches[0];
-    const queuedCourtAssignedAnnouncement = nowCallingQueue.find((entry): entry is Extract<NowCallingAnnouncement, { type: 'court-assigned' }> => entry.type === 'court-assigned') ?? null;
-    const courtAssignedAnnouncement = activeNowCallingAnnouncement?.type === 'court-assigned'
-      ? activeNowCallingAnnouncement
-      : queuedCourtAssignedAnnouncement;
+    const courtAssignedAnnouncement = activeNowCallingAnnouncement?.type === 'court-assigned' ? activeNowCallingAnnouncement : null;
     const isHighlighting = Boolean(
       nextMatch &&
       activeNowCallingAnnouncement?.type === 'next-up' &&
