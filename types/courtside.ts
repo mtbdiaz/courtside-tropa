@@ -2,7 +2,7 @@ export type BatchId = 1 | 2;
 
 export type Gender = 'M' | 'F';
 
-export type PlayerStatus = 'checked-in' | 'break' | 'playing';
+export type PlayerStatus = 'checked-in' | 'in-queue' | 'break' | 'playing';
 
 export type MatchMode = 'mixed' | 'custom';
 

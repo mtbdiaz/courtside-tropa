@@ -418,6 +418,11 @@ function readPersistedBatchUiSettings() {
     [activeBatch.players],
   );
 
+  const inQueuePlayers = useMemo(
+    () => activeBatch.players.filter((player) => player.status === 'in-queue').sort((a, b) => a.name.localeCompare(b.name)),
+    [activeBatch.players],
+  );
+
   const playingPlayers = useMemo(() => {
     const names = new Set<string>();
     for (const court of liveCourts) {
@@ -1912,6 +1917,19 @@ function readPersistedBatchUiSettings() {
                     >
                       Check In
                     </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <h4 className="text-sm font-semibold text-amber-100">In Queue</h4>
+              <div className="mt-2 max-h-48 space-y-2 overflow-auto pr-1">
+                {inQueuePlayers.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
+                {inQueuePlayers.map((player) => (
+                  <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                    <PlayerNameRow name={player.name} gender={player.gender} />
+                    <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100">Queued</span>
                   </div>
                 ))}
               </div>

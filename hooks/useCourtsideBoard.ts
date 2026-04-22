@@ -321,98 +321,9 @@ function matchTypeFromTeams(
 }
 
 function chooseReadyMatchWithPairRules(
-  batch: BatchSnapshot,
   availablePlayers: Player[],
   stats: ReturnType<typeof getPlayerStats>,
 ): { teamA: [string, string]; teamB: [string, string] } | null {
-  if (availablePlayers.length < 4) {
-    return null;
-  }
-
-  const toPairKey = (a: string, b: string) => [a, b].sort().join('|');
-  const availableById = new Map(availablePlayers.map((player) => [player.id, player]));
-  const fullPairs: Array<[string, string]> = [];
-  const seenPairs = new Set<string>();
-
-  for (const pair of batch.pairs) {
-    const [firstId, secondId] = pair.playerIds;
-    if (!availableById.has(firstId) || !availableById.has(secondId)) {
-      continue;
-    }
-
-    const key = toPairKey(firstId, secondId);
-    if (seenPairs.has(key)) {
-      continue;
-    }
-
-    seenPairs.add(key);
-    fullPairs.push([firstId, secondId].sort() as [string, string]);
-  }
-
-  if (fullPairs.length >= 2) {
-    const rankedPairs = [...fullPairs].sort((pairA, pairB) => {
-      const pairAGames = ((stats.get(pairA[0])?.gamesPlayed ?? 0) + (stats.get(pairA[1])?.gamesPlayed ?? 0)) / 2;
-      const pairBGames = ((stats.get(pairB[0])?.gamesPlayed ?? 0) + (stats.get(pairB[1])?.gamesPlayed ?? 0)) / 2;
-      if (pairAGames !== pairBGames) {
-        return pairAGames - pairBGames;
-      }
-
-      const pairACreated = Math.min(
-        Date.parse(availableById.get(pairA[0])?.createdAt ?? ''),
-        Date.parse(availableById.get(pairA[1])?.createdAt ?? ''),
-      );
-      const pairBCreated = Math.min(
-        Date.parse(availableById.get(pairB[0])?.createdAt ?? ''),
-        Date.parse(availableById.get(pairB[1])?.createdAt ?? ''),
-      );
-      return pairACreated - pairBCreated;
-    });
-
-    return {
-      teamA: rankedPairs[0],
-      teamB: rankedPairs[1],
-    };
-  }
-
-  if (fullPairs.length === 1) {
-    const lockedPair = fullPairs[0];
-    const soloPool = availablePlayers.filter((player) => !lockedPair.includes(player.id));
-    if (soloPool.length < 2) {
-      return null;
-    }
-
-    let bestDuo: [string, string] | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (let i = 0; i < soloPool.length - 1; i += 1) {
-      for (let j = i + 1; j < soloPool.length; j += 1) {
-        const first = soloPool[i];
-        const second = soloPool[j];
-        const firstStats = stats.get(first.id);
-        const secondStats = stats.get(second.id);
-        const gamesWeight = (firstStats?.gamesPlayed ?? 0) + (secondStats?.gamesPlayed ?? 0);
-        const teammateRepeat =
-          Number(firstStats?.recentTeammates.includes(second.id)) +
-          Number(secondStats?.recentTeammates.includes(first.id));
-
-        const score = gamesWeight * 100 + teammateRepeat * 35;
-        if (score < bestScore) {
-          bestScore = score;
-          bestDuo = [first.id, second.id].sort() as [string, string];
-        }
-      }
-    }
-
-    if (!bestDuo) {
-      return null;
-    }
-
-    return {
-      teamA: lockedPair,
-      teamB: bestDuo,
-    };
-  }
-
   return chooseFairReadyMatch(availablePlayers, stats);
 }
 
@@ -492,7 +403,7 @@ function normalizeSnapshot(input: {
     id: row.id,
     name: row.name,
     gender: row.gender,
-    status: livePlayerIds.has(row.id) ? 'playing' : queuedPlayerIds.has(row.id) ? 'checked-in' : row.status,
+    status: livePlayerIds.has(row.id) ? 'playing' : queuedPlayerIds.has(row.id) ? 'in-queue' : row.status,
     pairId: row.pair_id,
     createdAt: row.created_at ?? nowIso(),
     updatedAt: row.created_at ?? nowIso(),
@@ -1561,7 +1472,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     const base = Date.now();
 
     for (let index = 0; index < needed; index += 1) {
-      const next = chooseReadyMatchWithPairRules(batch, available, stats);
+      const next = chooseReadyMatchWithPairRules(available, stats);
       if (!next) {
         break;
       }
