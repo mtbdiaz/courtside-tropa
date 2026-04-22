@@ -483,12 +483,11 @@ function readPersistedBatchUiSettings() {
 
     if (newAnnouncements.length > 0) {
       const rafId = window.requestAnimationFrame(() => {
+        const [firstAnnouncement, ...remainingAnnouncements] = newAnnouncements;
+        setActiveNowCallingAnnouncement(firstAnnouncement ?? null);
         setNowCallingQueue((current) => {
-          const firstNextUpIndex = current.findIndex((entry) => entry.type === 'next-up');
-          if (firstNextUpIndex === -1) {
-            return [...current, ...newAnnouncements];
-          }
-          return [...current.slice(0, firstNextUpIndex), ...newAnnouncements, ...current.slice(firstNextUpIndex)];
+          const queueWithoutCourtAssignments = current.filter((entry) => entry.type !== 'court-assigned');
+          return [...remainingAnnouncements, ...queueWithoutCourtAssignments];
         });
       });
 
@@ -1185,6 +1184,8 @@ function readPersistedBatchUiSettings() {
   }
 
   if (scoreOnly) {
+    const scoreCourts = activeBatch.courts.filter((court) => court.isActive);
+
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
         <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
@@ -1222,85 +1223,101 @@ function readPersistedBatchUiSettings() {
 
         <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
           <div className="space-y-4">
-            {liveCourts.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No active courts right now.</div> : null}
-            {liveCourts.map((court) => {
+            {scoreCourts.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No active courts right now.</div> : null}
+            <div className="grid gap-4 lg:grid-cols-2">
+            {scoreCourts.map((court) => {
               const draft = scoreDrafts[court.id] ?? { a: '', b: '' };
+              const isLive = court.status === 'live';
               return (
-                <div key={court.id} className="rounded-2xl border border-orange-300/30 bg-orange-400/8 p-4">
+                <div key={court.id} className={`rounded-2xl border p-4 ${isLive ? 'border-orange-300/30 bg-orange-400/8' : 'border-white/10 bg-white/5'}`}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="font-semibold text-white">{court.label}</div>
-                    {(() => {
-                      const timerTone = getTimerTone(court.startedAt, nowMs);
-                      return (
-                        <div className={`rounded-full border px-3 py-1 text-xs ${timerTone.className} ${timerTone.pulse ? 'animate-pulse' : ''}`}>
-                          {formatTimer(court.startedAt, nowMs)}
-                        </div>
-                      );
-                    })()}
+                    <div className="flex items-center gap-2">
+                      <div className={`rounded-full border px-3 py-1 text-xs ${isLive ? 'border-emerald-300/30 bg-emerald-500/10 text-emerald-100' : 'border-slate-300/25 bg-slate-700/20 text-slate-200/90'}`}>
+                        {isLive ? 'Live' : 'Waiting'}
+                      </div>
+                      {isLive ? (() => {
+                        const timerTone = getTimerTone(court.startedAt, nowMs);
+                        return (
+                          <div className={`rounded-full border px-3 py-1 text-xs ${timerTone.className} ${timerTone.pulse ? 'animate-pulse' : ''}`}>
+                            {formatTimer(court.startedAt, nowMs)}
+                          </div>
+                        );
+                      })() : null}
+                    </div>
                   </div>
-                  <div className="mt-3 text-sm text-slate-200/90">
-                    <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team A</div>
-                    <div className="mt-2"><TeamList players={court.teamA} getGender={getGenderForName} /></div>
-                  </div>
-                  <div className="mt-1 text-sm text-slate-200/90">
-                    <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team B</div>
-                    <div className="mt-2"><TeamList players={court.teamB} alignRight getGender={getGenderForName} /></div>
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      min="0"
-                      value={draft.a}
-                      onChange={(event) =>
-                        setScoreDrafts((current) => ({
-                          ...current,
-                          [court.id]: { ...(current[court.id] ?? { a: '', b: '' }), a: event.target.value },
-                        }))
-                      }
-                      placeholder="Score A"
-                      className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
-                    />
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      min="0"
-                      value={draft.b}
-                      onChange={(event) =>
-                        setScoreDrafts((current) => ({
-                          ...current,
-                          [court.id]: { ...(current[court.id] ?? { a: '', b: '' }), b: event.target.value },
-                        }))
-                      }
-                      placeholder="Score B"
-                      className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
-                    />
-                    <button
-                      type="button"
-                      disabled={parseScoreValue(draft.a) === null || parseScoreValue(draft.b) === null}
-                      onClick={() => {
-                        const scoreA = parseScoreValue(draft.a);
-                        const scoreB = parseScoreValue(draft.b);
-                        if (scoreA === null || scoreB === null) {
-                          return;
-                        }
-                        completeMatch(activeBatch.batchId, court.id, scoreA, scoreB);
-                        setScoreDrafts((current) => {
-                          const next = { ...current };
-                          delete next[court.id];
-                          return next;
-                        });
-                      }}
-                      className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60 sm:col-span-2"
-                    >
-                      Save score
-                    </button>
-                  </div>
+                  {isLive ? (
+                    <>
+                      <div className="mt-3 text-sm text-slate-200/90">
+                        <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team A</div>
+                        <div className="mt-2"><TeamList players={court.teamA} getGender={getGenderForName} /></div>
+                      </div>
+                      <div className="mt-1 text-sm text-slate-200/90">
+                        <div className="text-xs uppercase tracking-[0.24em] text-slate-400/80">Team B</div>
+                        <div className="mt-2"><TeamList players={court.teamB} alignRight getGender={getGenderForName} /></div>
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          min="0"
+                          value={draft.a}
+                          onChange={(event) =>
+                            setScoreDrafts((current) => ({
+                              ...current,
+                              [court.id]: { ...(current[court.id] ?? { a: '', b: '' }), a: event.target.value },
+                            }))
+                          }
+                          placeholder="Score A"
+                          className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
+                        />
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          min="0"
+                          value={draft.b}
+                          onChange={(event) =>
+                            setScoreDrafts((current) => ({
+                              ...current,
+                              [court.id]: { ...(current[court.id] ?? { a: '', b: '' }), b: event.target.value },
+                            }))
+                          }
+                          placeholder="Score B"
+                          className="glass-input w-full min-w-0 rounded-2xl px-4 py-3"
+                        />
+                        <button
+                          type="button"
+                          disabled={parseScoreValue(draft.a) === null || parseScoreValue(draft.b) === null}
+                          onClick={() => {
+                            const scoreA = parseScoreValue(draft.a);
+                            const scoreB = parseScoreValue(draft.b);
+                            if (scoreA === null || scoreB === null) {
+                              return;
+                            }
+                            completeMatch(activeBatch.batchId, court.id, scoreA, scoreB);
+                            setScoreDrafts((current) => {
+                              const next = { ...current };
+                              delete next[court.id];
+                              return next;
+                            });
+                          }}
+                          className="rounded-2xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60 sm:col-span-2"
+                        >
+                          Save score
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-6 text-center text-sm font-medium text-slate-200/90">
+                      Waiting for players...
+                    </div>
+                  )}
                 </div>
               );
             })}
+            </div>
           </div>
         </section>
       </main>
