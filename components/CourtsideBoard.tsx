@@ -255,7 +255,12 @@ function readPersistedBatchUiSettings() {
   const [autoFillEnabledByBatch, setAutoFillEnabledByBatch] = useState<Record<BatchId, boolean>>(initialBatchUiSettings.autoFillEnabledByBatch);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toggleBreakDisabledUntil, setToggleBreakDisabledUntil] = useState<Record<string, number>>({});
-  const [nowCallingQueue, setNowCallingQueue] = useState<NowCallingAnnouncement[]>([]);
+  const [pendingCourtAnnouncements, setPendingCourtAnnouncements] = useState<
+    Array<Extract<NowCallingAnnouncement, { type: 'court-assigned' }>>
+  >([]);
+  const [pendingNextUpAnnouncements, setPendingNextUpAnnouncements] = useState<
+    Array<Extract<NowCallingAnnouncement, { type: 'next-up' }>>
+  >([]);
   const [activeNowCallingAnnouncement, setActiveNowCallingAnnouncement] = useState<NowCallingAnnouncement | null>(null);
   const autoFillRunningRef = useRef(false);
   const autoFillIntervalRef = useRef<number | null>(null);
@@ -438,7 +443,10 @@ function readPersistedBatchUiSettings() {
       liveCourtTrackerInitializedRef.current = false;
       seenLiveCourtSignatureByIdRef.current = {};
       announcedLiveCourtSignatureByIdRef.current = {};
-      return;
+      const rafId = window.requestAnimationFrame(() => {
+        setPendingCourtAnnouncements([]);
+      });
+      return () => window.cancelAnimationFrame(rafId);
     }
 
     if (!isReady) {
@@ -460,7 +468,7 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    const newAnnouncements: NowCallingAnnouncement[] = [];
+    const newAnnouncements: Array<Extract<NowCallingAnnouncement, { type: 'court-assigned' }>> = [];
     for (const court of activeBatch.courts) {
       if (court.status !== 'live') {
         continue;
@@ -498,12 +506,10 @@ function readPersistedBatchUiSettings() {
 
     if (newAnnouncements.length > 0) {
       const rafId = window.requestAnimationFrame(() => {
-        const [firstAnnouncement, ...remainingAnnouncements] = newAnnouncements;
-        setActiveNowCallingAnnouncement(firstAnnouncement ?? null);
-        setNowCallingQueue((current) => {
-          const queueWithoutCourtAssignments = current.filter((entry) => entry.type !== 'court-assigned');
-          return [...remainingAnnouncements, ...queueWithoutCourtAssignments];
-        });
+        setPendingCourtAnnouncements((current) => [...current, ...newAnnouncements]);
+        setActiveNowCallingAnnouncement((current) =>
+          current?.type === 'next-up' ? null : current,
+        );
       });
 
       return () => window.cancelAnimationFrame(rafId);
@@ -514,7 +520,10 @@ function readPersistedBatchUiSettings() {
     if (!publicView) {
       nowCallingMatchTrackerInitializedRef.current = false;
       previousNowCallingMatchIdRef.current = null;
-      return;
+      const rafId = window.requestAnimationFrame(() => {
+        setPendingNextUpAnnouncements([]);
+      });
+      return () => window.cancelAnimationFrame(rafId);
     }
 
     if (!isReady) {
@@ -538,29 +547,37 @@ function readPersistedBatchUiSettings() {
       nextMatchId !== previousMatchId &&
       hasCompleteTeams(nextMatch.teamA, nextMatch.teamB)
     ) {
-      setNowCallingQueue((current) => [
-        ...current,
-        {
-          id: `next-up-${nextMatch.id}-${Date.now()}`,
-          type: 'next-up',
-          matchId: nextMatch.id,
-          mode: nextMatch.mode,
-          teamA: [...nextMatch.teamA],
-          teamB: [...nextMatch.teamB],
-        },
-      ]);
+      setPendingNextUpAnnouncements((current) => {
+        if (
+          current.some((entry) => entry.matchId === nextMatch.id) ||
+          (activeNowCallingAnnouncement?.type === 'next-up' && activeNowCallingAnnouncement.matchId === nextMatch.id)
+        ) {
+          return current;
+        }
+
+        return [
+          ...current,
+          {
+            id: `next-up-${nextMatch.id}-${Date.now()}`,
+            type: 'next-up',
+            matchId: nextMatch.id,
+            mode: nextMatch.mode,
+            teamA: [...nextMatch.teamA],
+            teamB: [...nextMatch.teamB],
+          },
+        ];
+      });
     }
 
     previousNowCallingMatchIdRef.current = nextMatchId;
-  }, [isReady, publicView, upcomingMatches]);
+  }, [activeNowCallingAnnouncement, isReady, publicView, upcomingMatches]);
 
   useEffect(() => {
     if (!publicView || !activeNowCallingAnnouncement || activeNowCallingAnnouncement.type === 'court-assigned') {
       return;
     }
 
-    const hasQueuedCourtAssignment = nowCallingQueue.some((entry) => entry.type === 'court-assigned');
-    if (!hasQueuedCourtAssignment) {
+    if (pendingCourtAnnouncements.length === 0) {
       return;
     }
 
@@ -569,32 +586,45 @@ function readPersistedBatchUiSettings() {
     });
 
     return () => window.cancelAnimationFrame(rafId);
-  }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
+  }, [activeNowCallingAnnouncement, pendingCourtAnnouncements.length, publicView]);
 
   useEffect(() => {
     if (!publicView) {
       const rafId = window.requestAnimationFrame(() => {
         setActiveNowCallingAnnouncement(null);
-        setNowCallingQueue([]);
+        setPendingCourtAnnouncements([]);
+        setPendingNextUpAnnouncements([]);
       });
       return () => window.cancelAnimationFrame(rafId);
     }
 
-    if (activeNowCallingAnnouncement || nowCallingQueue.length === 0) {
+    if (activeNowCallingAnnouncement) {
       return;
     }
 
-    const courtAssignedIndex = nowCallingQueue.findIndex((entry) => entry.type === 'court-assigned');
-    const announcementIndex = courtAssignedIndex >= 0 ? courtAssignedIndex : 0;
-    const nextAnnouncement = nowCallingQueue[announcementIndex];
-    const remaining = nowCallingQueue.filter((_, index) => index !== announcementIndex);
-    const rafId = window.requestAnimationFrame(() => {
-      setActiveNowCallingAnnouncement(nextAnnouncement);
-      setNowCallingQueue(remaining);
-    });
+    if (pendingCourtAnnouncements.length > 0) {
+      const [nextAnnouncement, ...remaining] = pendingCourtAnnouncements;
+      const rafId = window.requestAnimationFrame(() => {
+        setActiveNowCallingAnnouncement(nextAnnouncement);
+        setPendingCourtAnnouncements(remaining);
+      });
+      return () => window.cancelAnimationFrame(rafId);
+    }
 
-    return () => window.cancelAnimationFrame(rafId);
-  }, [activeNowCallingAnnouncement, nowCallingQueue, publicView]);
+    if (pendingNextUpAnnouncements.length > 0) {
+      const [nextAnnouncement, ...remaining] = pendingNextUpAnnouncements;
+      const rafId = window.requestAnimationFrame(() => {
+        setActiveNowCallingAnnouncement(nextAnnouncement);
+        setPendingNextUpAnnouncements(remaining);
+      });
+      return () => window.cancelAnimationFrame(rafId);
+    }
+  }, [
+    activeNowCallingAnnouncement,
+    pendingCourtAnnouncements,
+    pendingNextUpAnnouncements,
+    publicView,
+  ]);
 
   useEffect(() => {
     if (!publicView || !activeNowCallingAnnouncement || activeNowCallingAnnouncement.type !== 'next-up') {
@@ -608,11 +638,28 @@ function readPersistedBatchUiSettings() {
 
     const rafId = window.requestAnimationFrame(() => {
       setActiveNowCallingAnnouncement(null);
-      setNowCallingQueue((current) => current.filter((entry) => entry.type !== 'next-up' || entry.matchId !== activeNowCallingAnnouncement.matchId));
+      setPendingNextUpAnnouncements((current) =>
+        current.filter((entry) => entry.matchId !== activeNowCallingAnnouncement.matchId),
+      );
     });
 
     return () => window.cancelAnimationFrame(rafId);
   }, [activeNowCallingAnnouncement, publicView, upcomingMatches]);
+
+  useEffect(() => {
+    if (!publicView) {
+      return;
+    }
+
+    const queuedMatchIds = new Set(upcomingMatches.map((match) => match.id));
+    const rafId = window.requestAnimationFrame(() => {
+      setPendingNextUpAnnouncements((current) =>
+        current.filter((entry) => queuedMatchIds.has(entry.matchId)),
+      );
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [publicView, upcomingMatches]);
 
   useEffect(() => {
     if (!publicView || !activeNowCallingAnnouncement) {
