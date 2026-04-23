@@ -773,7 +773,7 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    const target = Math.min(5, Math.max(1, activeBatch.queuedMatches.length + 1));
+    const target = Math.min(4, Math.max(1, activeBatch.queuedMatches.length + 1));
     await ensureReadyMatches(activeBatch.batchId, target);
   };
 

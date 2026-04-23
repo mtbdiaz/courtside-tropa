@@ -436,9 +436,12 @@ if (eligibleUnits.length === 0 && units.length >= 4) {
     }
   }
 
-  // 6. BUILD ALL POSSIBLE MATCH COMBINATIONS
-  const solos = windowUnits.filter(u => u.kind === 'solo');
-  const pairs = windowUnits.filter(u => u.kind === 'pair');
+// 6. BUILD ALL POSSIBLE MATCH COMBINATIONS
+  // SHUFFLE the window units so the same 4 players aren't always picked first
+  const shuffledWindow = [...windowUnits].sort(() => Math.random() - 0.5);
+
+  const solos = shuffledWindow.filter(u => u.kind === 'solo');
+  const pairs = shuffledWindow.filter(u => u.kind === 'pair');
 
   type Candidate = { priority: number; sum: number; teamA: [string, string]; teamB: [string, string] };
   const candidates: Candidate[] = [];
@@ -494,7 +497,9 @@ if (eligibleUnits.length === 0 && units.length >= 4) {
   });
 
   // 8. RANDOMIZE TEAMS SLIGHTLY (To prevent identical team-ups)
-  const finalMatch = candidates[0];
+  const bestSum = candidates[0].sum;
+  const topTier = candidates.filter(c => c.sum === bestSum && c.priority === candidates[0].priority);
+  const finalMatch = topTier[Math.floor(Math.random() * topTier.length)];
   const flip = Math.random() > 0.5;
 
   return { 
