@@ -354,169 +354,152 @@ function chooseReadyMatchWithPairRules(
   availablePlayers: Player[],
   stats: ReturnType<typeof getPlayerStats>,
 ): { teamA: [string, string]; teamB: [string, string] } | null {
-  if (availablePlayers.length < 4) {
-    return null;
-  }
+  if (availablePlayers.length < 4) return null;
 
-  type QueueUnitCandidate = {
-    kind: 'pair' | 'solo';
-    order: number;
-    playerIds: [string, string] | [string];
-  };
-
-  type MatchCandidate = {
-    compositionPriority: 0 | 1 | 2;
-    queueDepthScore: number;
-    queueOrderScore: number;
-    fairnessScore: number;
-    teamA: [string, string];
-    teamB: [string, string];
-  };
-
-  const ordered = [...availablePlayers].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  // 1. KEEP PAIRS TOGETHER
   const playersByPairId = new Map<string, Player[]>();
-  for (const player of ordered) {
-    if (!player.pairId) {
-      continue;
+  for (const player of availablePlayers) {
+    if (player.pairId) {
+      const group = playersByPairId.get(player.pairId) ?? [];
+      group.push(player);
+      playersByPairId.set(player.pairId, group);
     }
-    const group = playersByPairId.get(player.pairId) ?? [];
-    group.push(player);
-    playersByPairId.set(player.pairId, group);
   }
 
-  const units: QueueUnitCandidate[] = [];
-  const consumedPlayers = new Set<string>();
+  // 2. ASSIGN MATCH COUNTS (Pairs take the HIGHEST count)
+  const units: { kind: 'solo' | 'pair'; ids: string[]; matchCount: number; onCooldown: boolean }[] = [];
+  const consumed = new Set<string>();
 
-  for (let index = 0; index < ordered.length; index += 1) {
-    const player = ordered[index];
-    if (consumedPlayers.has(player.id)) {
-      continue;
-    }
+  for (const player of availablePlayers) {
+    if (consumed.has(player.id)) continue;
+    const pStats = stats.get(player.id);
+    const pMatches = (pStats?.gamesPlayed ?? 0); 
+    const pCooldown = (pStats as any)?.consecutiveMatches >= 2;
 
     if (player.pairId) {
-      const partner = (playersByPairId.get(player.pairId) ?? []).find((candidate) => candidate.id !== player.id);
-      if (partner && !consumedPlayers.has(partner.id)) {
+      const partner = (playersByPairId.get(player.pairId) ?? []).find(p => p.id !== player.id);
+      if (partner && !consumed.has(partner.id)) {
+        const partnerStats = stats.get(partner.id);
+        const partnerMatches = (partnerStats?.gamesPlayed ?? 0);
+        const partnerCooldown = (partnerStats as any)?.consecutiveMatches >= 2;
+
         units.push({
           kind: 'pair',
-          order: index,
-          playerIds: [player.id, partner.id],
+          ids: [player.id, partner.id],
+          matchCount: Math.max(pMatches, partnerMatches), // Pairs use the HIGHER count
+          onCooldown: pCooldown || partnerCooldown, 
         });
-        consumedPlayers.add(player.id);
-        consumedPlayers.add(partner.id);
+        consumed.add(player.id);
+        consumed.add(partner.id);
         continue;
       }
     }
 
     units.push({
       kind: 'solo',
-      order: index,
-      playerIds: [player.id],
+      ids: [player.id],
+      matchCount: pMatches,
+      onCooldown: pCooldown,
     });
-    consumedPlayers.add(player.id);
+    consumed.add(player.id);
   }
 
-  const soloUnits = units.filter((unit): unit is QueueUnitCandidate & { kind: 'solo'; playerIds: [string] } => unit.kind === 'solo');
-  const pairUnits = units.filter((unit): unit is QueueUnitCandidate & { kind: 'pair'; playerIds: [string, string] } => unit.kind === 'pair');
+// 3. APPLY COOLDOWNS & FIND LOWEST MATCH COUNT (L)
+let eligibleUnits = units.filter(u => !u.onCooldown);
+  
+// ANTI-STALL OVERRIDE: If literally EVERYONE is on cooldown, ignore the cooldown rule so courts don't sit empty.
+if (eligibleUnits.length === 0 && units.length >= 4) {
+  eligibleUnits = units; 
+} else if (eligibleUnits.length === 0) {
+  return null;
+}
 
-  const candidates: MatchCandidate[] = [];
+  let L = Math.min(...eligibleUnits.map(u => u.matchCount));
+  
+  // 4. APPLY FAIRNESS WINDOW (L and L+1)
+  let windowUnits = eligibleUnits.filter(u => u.matchCount <= L + 1);
 
-  const scorePlayers = (ids: string[]) =>
-    ids.reduce((sum, id) => sum + (stats.get(id)?.gamesPlayed ?? 0), 0);
+  // 5. ANTI-STALL (If courts are empty, expand window until we find 4 players)
+  let availableCount = windowUnits.reduce((sum, u) => sum + u.ids.length, 0);
+  let currentMax = L + 1;
+  
+  while (availableCount < 4) {
+    currentMax += 1;
+    windowUnits = eligibleUnits.filter(u => u.matchCount <= currentMax);
+    availableCount = windowUnits.reduce((sum, u) => sum + u.ids.length, 0);
 
-  const queueScores = (orders: number[]) => ({
-    queueDepthScore: Math.max(...orders),
-    queueOrderScore: orders.reduce((sum, value) => sum + value, 0),
-  });
-
-  // Priority 1: mixed composition (1 pair + 2 solos)
-  for (let i = 0; i < pairUnits.length; i += 1) {
-    const pair = pairUnits[i];
-    for (let j = 0; j < soloUnits.length - 1; j += 1) {
-      for (let k = j + 1; k < soloUnits.length; k += 1) {
-        const soloA = soloUnits[j];
-        const soloB = soloUnits[k];
-        const teamA = pair.playerIds;
-        const teamB: [string, string] = [soloA.playerIds[0], soloB.playerIds[0]];
-        const allIds = [...teamA, ...teamB];
-        const { queueDepthScore, queueOrderScore } = queueScores([pair.order, soloA.order, soloB.order]);
-        candidates.push({
-          compositionPriority: 0,
-          queueDepthScore,
-          queueOrderScore,
-          fairnessScore: scorePlayers(allIds),
-          teamA,
-          teamB,
-        });
-      }
+    // If completely out of rested players, ignore cooldown to keep courts running
+    if (currentMax > Math.max(...eligibleUnits.map(u => u.matchCount)) + 2) {
+      const absoluteL = Math.min(...units.map(u => u.matchCount));
+      windowUnits = units.filter(u => u.matchCount <= absoluteL + 2);
+      break;
     }
   }
 
-  // Priority 2: solo vs solo
-  for (let i = 0; i < soloUnits.length - 3; i += 1) {
-    for (let j = i + 1; j < soloUnits.length - 2; j += 1) {
-      for (let k = j + 1; k < soloUnits.length - 1; k += 1) {
-        for (let l = k + 1; l < soloUnits.length; l += 1) {
-          const a = soloUnits[i].playerIds[0];
-          const b = soloUnits[j].playerIds[0];
-          const c = soloUnits[k].playerIds[0];
-          const d = soloUnits[l].playerIds[0];
-          const { queueDepthScore, queueOrderScore } = queueScores([
-            soloUnits[i].order,
-            soloUnits[j].order,
-            soloUnits[k].order,
-            soloUnits[l].order,
-          ]);
+  // 6. BUILD ALL POSSIBLE MATCH COMBINATIONS
+  const solos = windowUnits.filter(u => u.kind === 'solo');
+  const pairs = windowUnits.filter(u => u.kind === 'pair');
+
+  type Candidate = { priority: number; sum: number; teamA: [string, string]; teamB: [string, string] };
+  const candidates: Candidate[] = [];
+
+  // Priority 0: 4 Solos
+  for (let i = 0; i < solos.length - 3; i++) {
+    for (let j = i + 1; j < solos.length - 2; j++) {
+      for (let k = j + 1; k < solos.length - 1; k++) {
+        for (let l = k + 1; l < solos.length; l++) {
           candidates.push({
-            compositionPriority: 1,
-            queueDepthScore,
-            queueOrderScore,
-            fairnessScore: scorePlayers([a, b, c, d]),
-            teamA: [a, b],
-            teamB: [c, d],
+            priority: 0,
+            sum: solos[i].matchCount + solos[j].matchCount + solos[k].matchCount + solos[l].matchCount,
+            teamA: [solos[i].ids[0], solos[j].ids[0]],
+            teamB: [solos[k].ids[0], solos[l].ids[0]],
           });
         }
       }
     }
   }
 
-  // Priority 3: pair vs pair (last resort)
-  for (let i = 0; i < pairUnits.length - 1; i += 1) {
-    for (let j = i + 1; j < pairUnits.length; j += 1) {
-      const first = pairUnits[i];
-      const second = pairUnits[j];
-      const { queueDepthScore, queueOrderScore } = queueScores([first.order, second.order]);
+  // Priority 1: Pair vs Pair
+  for (let i = 0; i < pairs.length - 1; i++) {
+    for (let j = i + 1; j < pairs.length; j++) {
       candidates.push({
-        compositionPriority: 2,
-        queueDepthScore,
-        queueOrderScore,
-        fairnessScore: scorePlayers([...first.playerIds, ...second.playerIds]),
-        teamA: first.playerIds,
-        teamB: second.playerIds,
+        priority: 1,
+        sum: (pairs[i].matchCount * 2) + (pairs[j].matchCount * 2),
+        teamA: [pairs[i].ids[0], pairs[i].ids[1]],
+        teamB: [pairs[j].ids[0], pairs[j].ids[1]],
       });
     }
   }
 
-  if (candidates.length === 0) {
-    return null;
+  // Priority 2: Pair vs 2 Solos (Only if forced)
+  for (let i = 0; i < pairs.length; i++) {
+    for (let j = 0; j < solos.length - 1; j++) {
+      for (let k = j + 1; k < solos.length; k++) {
+        candidates.push({
+          priority: 2,
+          sum: (pairs[i].matchCount * 2) + solos[j].matchCount + solos[k].matchCount,
+          teamA: [pairs[i].ids[0], pairs[i].ids[1]],
+          teamB: [solos[j].ids[0], solos[k].ids[0]],
+        });
+      }
+    }
   }
 
+  if (candidates.length === 0) return null;
+
+  // 7. FINAL SELECTION: LOWEST MATCHES > SOLO PRIORITY
   candidates.sort((a, b) => {
-    if (a.compositionPriority !== b.compositionPriority) {
-      return a.compositionPriority - b.compositionPriority;
-    }
-    if (a.queueDepthScore !== b.queueDepthScore) {
-      return a.queueDepthScore - b.queueDepthScore;
-    }
-    if (a.queueOrderScore !== b.queueOrderScore) {
-      return a.queueOrderScore - b.queueOrderScore;
-    }
-    return a.fairnessScore - b.fairnessScore;
+    if (a.sum !== b.sum) return a.sum - b.sum; // Lowest combined matches wins
+    return a.priority - b.priority;            // If equal, prefer Solos > Pair vs Pair
   });
 
-  const selected = candidates[0];
-  return {
-    teamA: selected.teamA,
-    teamB: selected.teamB,
+  // 8. RANDOMIZE TEAMS SLIGHTLY (To prevent identical team-ups)
+  const finalMatch = candidates[0];
+  const flip = Math.random() > 0.5;
+
+  return { 
+    teamA: flip ? finalMatch.teamA : finalMatch.teamB, 
+    teamB: flip ? finalMatch.teamB : finalMatch.teamA 
   };
 }
 
@@ -1373,38 +1356,47 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     await loadFromDatabase();
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
-  const addSinglePlayer = useCallback(async (batchId: BatchId, name: string, gender: Gender) => {
-    const supabase = supabaseRef.current;
-    let dbBatchId = withBatchDbId(batchId);
-    if (!supabase || !name.trim()) {
-      return;
-    }
+  const addSinglePlayer = useCallback(
+    async (name: string, gender: Gender) => {
+      const supabase = supabaseRef.current;
+      const dbBatchId = withBatchDbId(activeBatch.batchId);
+      if (!supabase || !dbBatchId) return;
 
-    if (!dbBatchId) {
-      await loadFromDatabase();
-      dbBatchId = withBatchDbId(batchId);
-    }
+      // 1. GHOST MATCH FIX: Find the current lowest matches for active players
+      const { data: activePlayers } = await supabase
+        .from('players')
+        .select('games_played')
+        .eq('batch_id', dbBatchId)
+        .eq('status', 'checked-in');
+        
+      let startingMatches = 0;
+      if (activePlayers && activePlayers.length > 0) {
+        const L = Math.min(...activePlayers.map(p => p.games_played || 0));
+        startingMatches = Math.max(L - 1, 0); // Start at L-1, but never below 0
+      }
 
-    if (!dbBatchId) {
-      console.error('Add player failed: missing batch mapping', { batchId, name });
-      return;
-    }
+      // 2. Insert the player with the offset applied
+      const { data, error } = await supabase
+        .from('players')
+        .insert({ 
+          batch_id: dbBatchId, 
+          name, 
+          gender, 
+          status: 'checked-in',
+          games_played: startingMatches // <--- ADDED THIS LINE
+        })
+        .select('*')
+        .single();
 
-    const { error } = await supabase.from('players').insert({
-      batch_id: dbBatchId,
-      name: name.trim(),
-      gender,
-      status: 'break',
-      created_at: nowIso(),
-    });
-
-    if (error) {
-      console.error('Add player failed', error);
-      return;
-    }
-
-    await loadFromDatabase();
-  }, [loadFromDatabase, withBatchDbId]);
+      if (error) {
+        reportActionError('Failed to add player');
+        console.error(error);
+      } else if (data) {
+        void loadFromDatabase();
+      }
+    },
+    [activeBatch.batchId, loadFromDatabase, reportActionError]
+  );
 
   const addBulk = useCallback(async (batchId: BatchId, names: string[], gender: Gender) => {
     const supabase = supabaseRef.current;
@@ -1727,14 +1719,25 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     await loadFromDatabase();
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
-  const ensureReadyMatches = useCallback(async (batchId: BatchId, targetReadyMatches = 5) => {
+  const ensureReadyMatches = useCallback(async (batchId: BatchId, targetReadyMatches = 1) => {
     clearActionError();
+
+    // 1. Check if it's already processing before doing anything
+    if (queueProcessing) return;
+
+    // 2. Declare the variables FIRST
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
+
+    // 3. NOW you can safely check if they exist
     if (!supabase || !dbBatchId) {
       reportActionError('Queue generation failed: missing database connection or batch mapping.');
       return;
     }
+
+    // 4. Safe to lock the queue and proceed
+    setQueueProcessing(true);
+
 
     const lockAcquired = await acquireQueueLock(5000);
     if (!lockAcquired) {

@@ -149,24 +149,32 @@ function pushUnique(list: string[], value: string, limit = 6) {
 
 export function getPlayerStats(snapshot: BatchSnapshot) {
   const players = getPlayerMap(snapshot);
+  
+  // 1. Initialize stats for all players
   const stats = new Map(
-    snapshot.players.map((player) => [player.id, {
-      playerId: player.id,
-      name: player.name,
-      wins: 0,
-      gamesPlayed: 0,
-      lastPlayedAt: null as string | null,
-      recentTeammates: [] as string[],
-      recentOpponents: [] as string[],
-      createdAt: player.createdAt,
-    }])
+    snapshot.players.map((player) => [
+      player.id,
+      {
+        playerId: player.id,
+        name: player.name,
+        wins: 0,
+        gamesPlayed: 0,
+        lastPlayedAt: null as string | null,
+        recentTeammates: [] as string[],
+        recentOpponents: [] as string[],
+        createdAt: player.createdAt,
+        consecutiveMatches: 0, // Reset to 0, will be calculated below
+      }
+    ])
   );
 
-  for (const match of getCompletedMatches(snapshot)) {
+  // 2. Get all completed matches
+  const completedMatches = getCompletedMatches(snapshot);
+
+  // 3. Process Career Stats (Wins/Losses/History)
+  for (const match of completedMatches) {
     const playerIds = match.playerIds.filter((id) => players.has(id));
-    if (playerIds.length !== 4) {
-      continue;
-    }
+    if (playerIds.length !== 4) continue;
 
     const teamA = playerIds.slice(0, 2);
     const teamB = playerIds.slice(2, 4);
@@ -174,45 +182,53 @@ export function getPlayerStats(snapshot: BatchSnapshot) {
 
     for (const playerId of playerIds) {
       const entry = stats.get(playerId);
-      if (!entry) {
-        continue;
-      }
+      if (!entry) continue;
 
       entry.gamesPlayed += 1;
-      entry.lastPlayedAt = entry.lastPlayedAt ?? match.endedAt ?? match.startedAt;
+      // Keep the most recent timestamp
+      if (!entry.lastPlayedAt || (match.endedAt && match.endedAt > entry.lastPlayedAt)) {
+        entry.lastPlayedAt = match.endedAt ?? match.startedAt;
+      }
+      
       if (winnerIds.includes(playerId)) {
         entry.wins += 1;
       }
     }
 
+    // Track teammates and opponents for pair-rule logic
     for (const playerId of teamA) {
       const entry = stats.get(playerId);
-      if (!entry) {
-        continue;
+      if (entry) {
+        teamA.forEach((mateId) => { if (mateId !== playerId) pushUnique(entry.recentTeammates, mateId); });
+        teamB.forEach((oppId) => pushUnique(entry.recentOpponents, oppId));
       }
-
-      teamA.forEach((mateId) => {
-        if (mateId !== playerId) {
-          pushUnique(entry.recentTeammates, mateId);
-        }
-      });
-
-      teamB.forEach((opponentId) => pushUnique(entry.recentOpponents, opponentId));
     }
-
     for (const playerId of teamB) {
       const entry = stats.get(playerId);
-      if (!entry) {
-        continue;
+      if (entry) {
+        teamB.forEach((mateId) => { if (mateId !== playerId) pushUnique(entry.recentTeammates, mateId); });
+        teamA.forEach((oppId) => pushUnique(entry.recentOpponents, oppId));
       }
+    }
+  }
 
-      teamB.forEach((mateId) => {
-        if (mateId !== playerId) {
-          pushUnique(entry.recentTeammates, mateId);
-        }
-      });
+  // 4. COOLDOWN CALCULATION (The Change)
+  // Sort matches by time (newest first) to see who just finished playing
+  const recentMatches = [...completedMatches].sort((a, b) => 
+    new Date(b.endedAt || b.startedAt || 0).getTime() - new Date(a.endedAt || a.startedAt || 0).getTime()
+  );
 
-      teamA.forEach((opponentId) => pushUnique(entry.recentOpponents, opponentId));
+  // A "Cycle" is roughly one round across all active courts
+  const activeCourtCount = snapshot.courts.filter(c => c.isActive).length;
+  const immediateHistory = recentMatches.slice(0, activeCourtCount);
+
+  for (const match of immediateHistory) {
+    for (const pId of match.playerIds) {
+      const pStat = stats.get(pId);
+      if (pStat) {
+        // If they appear in this very recent history, they are on "consecutive" status
+        pStat.consecutiveMatches = 1;
+      }
     }
   }
 

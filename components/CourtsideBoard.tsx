@@ -809,7 +809,7 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    addSinglePlayer(activeBatch.batchId, playerName, playerGender);
+    addSinglePlayer(playerName, playerGender as 'M' | 'F');
     setPlayerName('');
   };
 
@@ -823,7 +823,7 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    addBulk(activeBatch.batchId, names, bulkGender);
+    addBulk(activeBatch.batchId, names, bulkGender as 'M' | 'F');
     setBulkNames('');
   };
 
