@@ -691,9 +691,9 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    void ensureReadyMatches(activeBatch.batchId, 5);
+    void ensureReadyMatches(activeBatch.batchId, 4);
     const generationId = window.setInterval(() => {
-      void ensureReadyMatches(activeBatch.batchId, 5);
+      void ensureReadyMatches(activeBatch.batchId, 4);
     }, 5000);
 
     return () => {
@@ -1642,7 +1642,7 @@ function readPersistedBatchUiSettings() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 5 when not paused.</div>
+                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 4 when not paused.</div>
               </div>
               <div className="flex items-center gap-2">
                 <button

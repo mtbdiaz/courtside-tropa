@@ -496,9 +496,21 @@ if (eligibleUnits.length === 0 && units.length >= 4) {
     return a.priority - b.priority;            // If equal, prefer Solos > Pair vs Pair
   });
 
-  // 8. RANDOMIZE TEAMS SLIGHTLY (To prevent identical team-ups)
+// 8. FINAL SELECTION: Allow variance to break up cliques
   const bestSum = candidates[0].sum;
-  const topTier = candidates.filter(c => c.sum === bestSum && c.priority === candidates[0].priority);
+  const bestPriority = candidates[0].priority;
+  
+  // THE FIX: Allow a "variance" of up to 2 games in the sum.
+  // This allows the engine to occasionally pull an (L+1) player into an (L) group
+  // so the exact same 4 people don't get stuck together.
+  const variance = 2; 
+
+  const topTier = candidates.filter(c => 
+    c.sum <= bestSum + variance && 
+    c.priority === bestPriority
+  );
+
+  // Randomly pick one of these highly-rated matches
   const finalMatch = topTier[Math.floor(Math.random() * topTier.length)];
   const flip = Math.random() > 0.5;
 
