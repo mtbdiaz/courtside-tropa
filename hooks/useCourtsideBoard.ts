@@ -1821,13 +1821,27 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    const stats = getPlayerStats(batch);
-    const available = batch.players.filter((player) => player.status === 'checked-in' && !reserved.has(player.id));
-    const next = chooseReadyMatchWithPairRules(available, stats);
-    if (!next) {
-      await loadFromDatabase();
-      return;
-    }
+const stats = getPlayerStats(batch);
+  
+  // Create a dynamic list of players we use during this specific generation cycle
+  const currentlyDrafted = new Set<string>();
+
+  const available = batch.players.filter((player) => 
+    player.status === 'checked-in' && 
+    !reserved.has(player.id) &&
+    !currentlyDrafted.has(player.id) // <--- THE NEW FIX
+  );
+
+  const next = chooseReadyMatchWithPairRules(available, stats);
+  
+  if (!next) {
+    await loadFromDatabase();
+    return;
+  }
+
+  // IMMEDIATELY reserve these new players so the next loop can't pick them!
+  next.teamA.forEach(id => currentlyDrafted.add(id));
+  next.teamB.forEach(id => currentlyDrafted.add(id));
 
     const payload: {
       batch_id: string;
