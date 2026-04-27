@@ -771,7 +771,8 @@ function readPersistedBatchUiSettings() {
         await ensureReadyMatches(activeBatch.batchId, 4);
         // If PAUSE was activated while ensureReadyMatches ran, bail out before assigning courts.
         if (queuePaused) return;
-        await fillIdleCourtsRef.current(activeBatch.batchId);
+        // One-by-one assignment for public queue clarity (preserves NOW CALLING visibility).
+        await fillIdleCourtsRef.current(activeBatch.batchId, 1);
       } finally {
         if (autoFillWatchdogRef.current !== null) {
           window.clearTimeout(autoFillWatchdogRef.current);
@@ -918,7 +919,7 @@ function readPersistedBatchUiSettings() {
     // Manual override: top up ready queue first, then push queued matches to idle courts.
     const targetReady = Math.min(4, Math.max(activeBatch.queuedMatches.length, idleCourts.length));
     await ensureReadyMatches(activeBatch.batchId, targetReady);
-    await fillIdleCourts(activeBatch.batchId);
+    await fillIdleCourts(activeBatch.batchId, 1);
   };
 
   const handleAddPlayer = () => {

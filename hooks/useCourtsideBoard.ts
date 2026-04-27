@@ -2604,7 +2604,7 @@ const stats = getPlayerStats(batch);
     await enqueueCustomMatch(batchId, selected, placement);
   }, [clearActionError, enqueueCustomMatch, reportActionError, snapshot.batches]);
 
-  const fillIdleCourts = useCallback(async (batchId: BatchId) => {
+  const fillIdleCourts = useCallback(async (batchId: BatchId, maxAssignments?: number) => {
     clearActionError();
     const supabase = supabaseRef.current;
     const dbBatchId = withBatchDbId(batchId);
@@ -2634,7 +2634,10 @@ const stats = getPlayerStats(batch);
       .order('start_time', { ascending: true });
 
     const ready = queuedRows ?? [];
-    const assignCount = Math.min(idleCourts.length, ready.length);
+    const normalizedLimit = typeof maxAssignments === 'number' && maxAssignments > 0
+      ? Math.floor(maxAssignments)
+      : Number.POSITIVE_INFINITY;
+    const assignCount = Math.min(idleCourts.length, ready.length, normalizedLimit);
 
     for (let i = 0; i < assignCount; i += 1) {
       const court = idleCourts[i];
