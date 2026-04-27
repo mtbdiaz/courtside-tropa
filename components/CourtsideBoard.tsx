@@ -7,7 +7,7 @@ import { BatchId, Gender } from '@/types/courtside';
 import { useCourtsideBoard } from '@/hooks/useCourtsideBoard';
 import { getLeaderboardEntries } from '@/lib/courtside-engine';
 import { AnimatePresence, motion } from 'framer-motion';
-import { LogOut, Search, Trophy } from 'lucide-react';
+import { ArrowUp, CalendarDays, ListOrdered, LogOut, Search, Trophy } from 'lucide-react';
 
 function formatTimer(startedAt: string | null, nowMs: number) {
   if (!startedAt) {
@@ -1012,17 +1012,17 @@ function readPersistedBatchUiSettings() {
     );
 
     return (
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
-        <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pb-28 pt-6 sm:px-6 sm:pb-8 lg:py-8">
+        <section id="public-top" className="glass-panel scroll-mt-24 rounded-[1.6rem] p-4 sm:rounded-[2rem] sm:p-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">Public Queue</p>
-              <h2 className="text-display mt-2 text-3xl font-semibold sm:text-4xl">Live Queue - Batch {activeBatch.batchId}</h2>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em]">
-                <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1 text-emerald-100">
+              <p className="text-[10px] uppercase tracking-[0.28em] text-amber-200/70 sm:text-xs sm:tracking-[0.35em]">Public Queue</p>
+              <h2 className="text-display mt-2 text-2xl font-semibold leading-tight sm:text-4xl">Live Queue - Batch {activeBatch.batchId}</h2>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] sm:text-xs sm:tracking-[0.18em]">
+                <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-100 sm:px-3">
                   {activeCourts.length} active
                 </span>
-                <span className="rounded-full border border-slate-300/25 bg-slate-700/20 px-3 py-1 text-slate-200/90">
+                <span className="rounded-full border border-slate-300/25 bg-slate-700/20 px-2.5 py-1 text-slate-200/90 sm:px-3">
                   {inactiveCourtCount} inactive
                 </span>
               </div>
@@ -1030,7 +1030,7 @@ function readPersistedBatchUiSettings() {
           </div>
         </section>
 
-        <section className="relative overflow-hidden rounded-[2rem] border border-amber-300/35 bg-gradient-to-r from-amber-300/25 via-orange-300/25 to-rose-300/25 px-6 py-6 shadow-[0_12px_40px_rgba(251,191,36,0.2)] sm:px-8 sm:py-7">
+        <section id="public-now-calling" className="relative scroll-mt-24 overflow-hidden rounded-[2rem] border border-amber-300/35 bg-gradient-to-r from-amber-300/25 via-orange-300/25 to-rose-300/25 px-5 py-5 shadow-[0_12px_40px_rgba(251,191,36,0.2)] sm:px-8 sm:py-7">
           <div className="pointer-events-none absolute -left-16 top-0 h-36 w-36 rounded-full bg-amber-200/20 blur-3xl" />
           <div className="pointer-events-none absolute -right-16 bottom-0 h-36 w-36 rounded-full bg-rose-200/20 blur-3xl" />
 
@@ -1170,7 +1170,7 @@ function readPersistedBatchUiSettings() {
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
+          <article id="public-upcoming" className="glass-panel scroll-mt-24 rounded-[2rem] p-5 sm:p-6">
             <h3 className="text-xl font-semibold text-white">Upcoming Matches</h3>
             <div className="mt-4 space-y-3">
               {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No ready matches yet.</div> : null}
@@ -1194,7 +1194,7 @@ function readPersistedBatchUiSettings() {
             </div>
           </article>
 
-          <article className="glass-panel rounded-[2rem] p-5 sm:p-6">
+          <article id="public-current" className="glass-panel scroll-mt-24 rounded-[2rem] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-xl font-semibold text-white">Current Matches</h3>
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-amber-200/80">
@@ -1231,7 +1231,7 @@ function readPersistedBatchUiSettings() {
           </article>
         </section>
 
-        <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
+        <section id="public-leaderboard" className="glass-panel scroll-mt-24 rounded-[2rem] p-5 sm:p-6">
           <div className="flex items-center gap-3">
             <Trophy className="h-5 w-5 text-amber-300" />
             <h3 className="text-xl font-semibold text-white">Leaderboard</h3>
@@ -1283,6 +1283,27 @@ function readPersistedBatchUiSettings() {
             </div>
           </div>
         </section>
+
+        <nav className="fixed inset-x-0 bottom-4 z-50 px-4 sm:hidden">
+          <div className="mx-auto flex max-w-md items-center justify-between gap-2 rounded-[1.5rem] border border-white/14 bg-slate-950/78 px-2.5 py-2 shadow-[0_16px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+            <a href="#public-top" className="flex flex-1 flex-col items-center gap-1 rounded-[1rem] px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-100/85">
+              <ArrowUp className="h-4 w-4 text-amber-200" />
+              Top
+            </a>
+            <a href="#public-upcoming" className="flex flex-1 flex-col items-center gap-1 rounded-[1rem] px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-100/85">
+              <CalendarDays className="h-4 w-4 text-orange-200" />
+              Upcoming
+            </a>
+            <a href="#public-current" className="flex flex-1 flex-col items-center gap-1 rounded-[1rem] px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-100/85">
+              <ListOrdered className="h-4 w-4 text-emerald-200" />
+              Current
+            </a>
+            <a href="#public-leaderboard" className="flex flex-1 flex-col items-center gap-1 rounded-[1rem] px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-100/85">
+              <Trophy className="h-4 w-4 text-amber-200" />
+              Board
+            </a>
+          </div>
+        </nav>
       </main>
     );
   }
