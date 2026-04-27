@@ -701,24 +701,14 @@ function readPersistedBatchUiSettings() {
 
   // Automatic queue top-up when ready queue is below 4.
   // Runs only when auto-fill is OFF, and always respects PAUSE.
-  // Fast retry cadence keeps queue responsive right after removals/completions.
   useEffect(() => {
     if (publicView || scoreOnly || queuePaused || autoFillEnabled) {
       return;
     }
 
-    const topUpOnce = () => {
-      if (activeBatch.queuedMatches.length < 4) {
-        void ensureReadyMatches(activeBatch.batchId, 4);
-      }
-    };
-
-    topUpOnce();
-    const generationId = window.setInterval(topUpOnce, 800);
-
-    return () => {
-      window.clearInterval(generationId);
-    };
+    if (activeBatch.queuedMatches.length < 4) {
+      void ensureReadyMatches(activeBatch.batchId, 4);
+    }
   }, [activeBatch.batchId, activeBatch.queuedMatches.length, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
 
   useEffect(() => {
