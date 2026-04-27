@@ -267,6 +267,8 @@ function readPersistedBatchUiSettings() {
   const autoFillIntervalRef = useRef<number | null>(null);
   const autoFillWatchdogRef = useRef<number | null>(null);
   const autoFillStartedAtMsRef = useRef<number | null>(null);
+  const lastManualGenerateAtRef = useRef<number | null>(null);
+  const MANUAL_GENERATE_DEBOUNCE_MS = 1200;
   const fillIdleCourtsRef = useRef(fillIdleCourts);
   const seenLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
   const announcedLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
@@ -291,6 +293,13 @@ function readPersistedBatchUiSettings() {
           autoFillEnabledByBatch,
         }),
       );
+      try {
+        // publish a lightweight global pause map so hooks running elsewhere can observe it
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).__COURTSIDE_QUEUE_PAUSED_BY_BATCH = queuePausedByBatch;
+      } catch {
+        // ignore
+      }
     } catch {
       // Ignore localStorage write failures (private mode, quota, etc).
     }
@@ -689,22 +698,12 @@ function readPersistedBatchUiSettings() {
   const topLeaderboard = leaderboard.slice(0, 3);
   const remainingLeaderboard = leaderboard.slice(3);
 
-  useEffect(() => {
-    if (publicView || scoreOnly || queuePaused || autoFillEnabled) {
-      return;
-    }
-
-    void ensureReadyMatches(activeBatch.batchId, 5);
-    const generationId = window.setInterval(() => {
-      void ensureReadyMatches(activeBatch.batchId, 5);
-    }, 5000);
-
-    return () => {
-      window.clearInterval(generationId);
-    };
-  }, [activeBatch.batchId, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
+  // NOTE: Background 5s generator removed. Auto-fill (below) is the single authoritative
+  // automatic runner and will be started only when explicitly enabled. This avoids
+  // overlapping timers and keeps PAUSE semantics simple (PAUSE blocks all automation).
 
   useEffect(() => {
+    // Clear any previously running timers/watchdogs/starter timeouts
     if (autoFillIntervalRef.current !== null) {
       window.clearInterval(autoFillIntervalRef.current);
       autoFillIntervalRef.current = null;
@@ -716,15 +715,22 @@ function readPersistedBatchUiSettings() {
     autoFillStartedAtMsRef.current = null;
     autoFillRunningRef.current = false;
 
-    if (publicView || scoreOnly || !autoFillEnabled) {
+    // If auto-fill isn't enabled or we're in a view that shouldn't run automation, stop here.
+    if (publicView || scoreOnly || !autoFillEnabled || queuePaused) {
       return;
     }
 
-    const runAutoFill = () => {
+    // Single starter timeout that waits exactly 15s before the first run. Subsequent runs
+    // use a single interval. This prevents immediate execution when toggled ON.
+    let starterTimeout: number | null = null;
+
+    const runAutoFill = async () => {
+      // If paused, don't run.
+      if (queuePaused) return;
+
       if (autoFillRunningRef.current) {
         const startedAt = autoFillStartedAtMsRef.current;
         if (startedAt !== null && Date.now() - startedAt >= AUTO_FILL_STUCK_TIMEOUT_MS) {
-          // Recover from stuck runs (e.g., network stall) without requiring toggle spam.
           autoFillRunningRef.current = false;
           autoFillStartedAtMsRef.current = null;
         } else {
@@ -743,26 +749,42 @@ function readPersistedBatchUiSettings() {
         autoFillWatchdogRef.current = null;
       }, AUTO_FILL_STUCK_TIMEOUT_MS);
 
-      Promise.resolve()
-        .then(async () => {
-          // When auto-fill is ON, it should both top up queue and place matches on idle courts.
-          await ensureReadyMatches(activeBatch.batchId, 5);
-          await fillIdleCourtsRef.current(activeBatch.batchId);
-        })
-        .finally(() => {
+      try {
+        // Top up queue then fill idle courts. Both functions already use locks.
+        await ensureReadyMatches(activeBatch.batchId, 5);
+        // If PAUSE was activated while ensureReadyMatches ran, bail out before assigning courts.
+        if (queuePaused) return;
+        await fillIdleCourtsRef.current(activeBatch.batchId);
+      } finally {
         if (autoFillWatchdogRef.current !== null) {
           window.clearTimeout(autoFillWatchdogRef.current);
           autoFillWatchdogRef.current = null;
         }
         autoFillRunningRef.current = false;
         autoFillStartedAtMsRef.current = null;
-        });
+      }
     };
 
-    runAutoFill();
-    autoFillIntervalRef.current = window.setInterval(runAutoFill, 15000);
+    // Start after exactly 15s
+    starterTimeout = window.setTimeout(() => {
+      // If paused or disabled between scheduling and expiry, do not run.
+      if (!autoFillEnabled || queuePaused) {
+        starterTimeout = null;
+        return;
+      }
+      void runAutoFill();
+      // Start steady 15s interval after initial delayed run
+      autoFillIntervalRef.current = window.setInterval(() => {
+        void runAutoFill();
+      }, 15000);
+      starterTimeout = null;
+    }, 15000);
 
     return () => {
+      if (starterTimeout !== null) {
+        window.clearTimeout(starterTimeout);
+        starterTimeout = null;
+      }
       if (autoFillIntervalRef.current !== null) {
         window.clearInterval(autoFillIntervalRef.current);
         autoFillIntervalRef.current = null;
@@ -774,7 +796,7 @@ function readPersistedBatchUiSettings() {
       autoFillStartedAtMsRef.current = null;
       autoFillRunningRef.current = false;
     };
-  }, [AUTO_FILL_STUCK_TIMEOUT_MS, activeBatch.batchId, autoFillEnabled, ensureReadyMatches, publicView, scoreOnly]);
+  }, [AUTO_FILL_STUCK_TIMEOUT_MS, activeBatch.batchId, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly, fillIdleCourtsRef]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -796,9 +818,13 @@ function readPersistedBatchUiSettings() {
   };
 
   const handleAddCustomToQueue = async (placement: 'top' | 'bottom') => {
+    if (queuePaused) return;
     if (customSelection.length !== 4) {
       return;
     }
+
+    // Avoid overlap with auto-fill
+    if (autoFillRunningRef.current) return;
 
     await enqueueCustomMatch(activeBatch.batchId, customSelection, placement);
     setCustomSelection([]);
@@ -810,9 +836,20 @@ function readPersistedBatchUiSettings() {
   };
 
   const handleGenerateOneQueue = async () => {
+    // Enforce pause semantics and debounce manual generation
+    if (queuePaused) return;
+
+    const now = Date.now();
+    const last = lastManualGenerateAtRef.current ?? 0;
+    if (now - last < MANUAL_GENERATE_DEBOUNCE_MS) return;
+    lastManualGenerateAtRef.current = now;
+
     if (queueProcessing || activeBatch.queuedMatches.length >= 5) {
       return;
     }
+
+    // If auto-fill is currently running, prefer auto-fill (no manual overlap)
+    if (autoFillRunningRef.current) return;
 
     const target = Math.min(5, Math.max(1, activeBatch.queuedMatches.length + 1));
     await ensureReadyMatches(activeBatch.batchId, target);
@@ -842,10 +879,14 @@ function readPersistedBatchUiSettings() {
   };
 
   const handlePlaceQueueOnCourt = async (courtId: string, matchId: string) => {
+    if (queuePaused) return;
+    if (autoFillRunningRef.current) return;
     await startQueuedMatchOnCourt(activeBatch.batchId, courtId, matchId);
   };
 
   const handleManualAutoFillCourts = async () => {
+    if (queuePaused) return;
+
     if (queueProcessing) {
       return;
     }
@@ -853,6 +894,9 @@ function readPersistedBatchUiSettings() {
     if (idleCourts.length === 0) {
       return;
     }
+
+    // If auto-fill is enabled and currently running, avoid overlapping execution.
+    if (autoFillEnabled && autoFillRunningRef.current) return;
 
     // Manual override: top up ready queue first, then push queued matches to idle courts.
     const targetReady = Math.min(5, Math.max(activeBatch.queuedMatches.length, idleCourts.length));
@@ -984,6 +1028,8 @@ function readPersistedBatchUiSettings() {
   };
 
   const handleGenerateGenderCustom = async (gender: 'M' | 'F', placement: 'top' | 'bottom') => {
+    if (queuePaused) return;
+    if (autoFillRunningRef.current) return;
     await generateSingleGenderCustomMatch(activeBatch.batchId, gender, placement);
   };
 

@@ -1878,6 +1878,18 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     try {
+      // If a UI-level pause was set, respect it immediately after acquiring the lock.
+      // This uses a small global flag set by the UI so the hook can abort in-progress runs.
+      // (Prevents assignments from proceeding when an admin hits PAUSE mid-cycle.)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const globalPaused = typeof window !== 'undefined' && (window as any).__COURTSIDE_QUEUE_PAUSED_BY_BATCH?.[batchId];
+        if (globalPaused) {
+          return;
+        }
+      } catch (err) {
+        // ignore
+      }
       const batch = snapshot.batches[batchId];
       const { data: queuedRows } = await supabase
       .from('matches')
@@ -2136,6 +2148,15 @@ const stats = getPlayerStats(batch);
     }
 
     try {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const globalPaused = typeof window !== 'undefined' && (window as any).__COURTSIDE_QUEUE_PAUSED_BY_BATCH?.[batchId];
+        if (globalPaused) {
+          return;
+        }
+      } catch (err) {
+        // ignore
+      }
       if (selectedPlayers && selectedPlayers.playerIds.length === 4) {
         const payload: {
         batch_id: string;
