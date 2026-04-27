@@ -690,19 +690,19 @@ function readPersistedBatchUiSettings() {
   const remainingLeaderboard = leaderboard.slice(3);
 
   useEffect(() => {
-    if (publicView || scoreOnly || queuePaused) {
+    if (publicView || scoreOnly || queuePaused || autoFillEnabled) {
       return;
     }
 
-    void ensureReadyMatches(activeBatch.batchId, 4);
+    void ensureReadyMatches(activeBatch.batchId, 5);
     const generationId = window.setInterval(() => {
-      void ensureReadyMatches(activeBatch.batchId, 4);
+      void ensureReadyMatches(activeBatch.batchId, 5);
     }, 5000);
 
     return () => {
       window.clearInterval(generationId);
     };
-  }, [activeBatch.batchId, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
+  }, [activeBatch.batchId, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
 
   useEffect(() => {
     if (autoFillIntervalRef.current !== null) {
@@ -743,14 +743,20 @@ function readPersistedBatchUiSettings() {
         autoFillWatchdogRef.current = null;
       }, AUTO_FILL_STUCK_TIMEOUT_MS);
 
-      Promise.resolve(fillIdleCourtsRef.current(activeBatch.batchId)).finally(() => {
+      Promise.resolve()
+        .then(async () => {
+          // When auto-fill is ON, it should both top up queue and place matches on idle courts.
+          await ensureReadyMatches(activeBatch.batchId, 5);
+          await fillIdleCourtsRef.current(activeBatch.batchId);
+        })
+        .finally(() => {
         if (autoFillWatchdogRef.current !== null) {
           window.clearTimeout(autoFillWatchdogRef.current);
           autoFillWatchdogRef.current = null;
         }
         autoFillRunningRef.current = false;
         autoFillStartedAtMsRef.current = null;
-      });
+        });
     };
 
     runAutoFill();
@@ -768,7 +774,7 @@ function readPersistedBatchUiSettings() {
       autoFillStartedAtMsRef.current = null;
       autoFillRunningRef.current = false;
     };
-  }, [AUTO_FILL_STUCK_TIMEOUT_MS, activeBatch.batchId, autoFillEnabled, publicView, scoreOnly]);
+  }, [AUTO_FILL_STUCK_TIMEOUT_MS, activeBatch.batchId, autoFillEnabled, ensureReadyMatches, publicView, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
