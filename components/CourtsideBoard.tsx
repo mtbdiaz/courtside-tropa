@@ -695,8 +695,9 @@ function readPersistedBatchUiSettings() {
 
   const queuePaused = queuePausedByBatch[activeBatch.batchId];
   const autoFillEnabled = autoFillEnabledByBatch[activeBatch.batchId];
-  const topLeaderboard = leaderboard.slice(0, 3);
-  const remainingLeaderboard = leaderboard.slice(3);
+  const deferredLeaderboard = useDeferredValue(leaderboard);
+  const topLeaderboard = deferredLeaderboard.slice(0, 3);
+  const remainingLeaderboard = deferredLeaderboard.slice(3);
 
   // Automatic queue top-up when ready queue is below 4.
   // Runs only when auto-fill is OFF, and always respects PAUSE.
@@ -1304,7 +1305,7 @@ function readPersistedBatchUiSettings() {
 
           <div className="mt-4 space-y-4">
             {topLeaderboard.length > 0 ? (
-              <div className="grid gap-3 lg:grid-cols-3">
+              <motion.div layout className="grid gap-3 lg:grid-cols-3">
                 {topLeaderboard.map((entry, index) => {
                   const variants = [
                     'border-amber-300/55 bg-gradient-to-br from-amber-300/25 to-amber-400/10 shadow-[0_10px_30px_rgba(251,191,36,0.18)]',
@@ -1313,7 +1314,12 @@ function readPersistedBatchUiSettings() {
                   ];
 
                   return (
-                    <motion.div key={entry.playerId} layout className={`rounded-[1.5rem] border p-4 ${variants[index] ?? variants[2]}`}>
+                    <motion.div
+                      key={entry.playerId}
+                      layout="position"
+                      transition={{ type: 'spring', stiffness: 520, damping: 42, mass: 0.85 }}
+                      className={`rounded-[1.5rem] border p-4 ${variants[index] ?? variants[2]}`}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-xs font-bold text-amber-100">{entry.rank}</span>
@@ -1327,24 +1333,29 @@ function readPersistedBatchUiSettings() {
                     </motion.div>
                   );
                 })}
-              </div>
+              </motion.div>
             ) : null}
 
             <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-3">
-              <div className="max-h-72 space-y-2 overflow-auto pr-1">
+              <motion.div layout className="max-h-72 space-y-2 overflow-auto pr-1">
                 {remainingLeaderboard.length === 0 ? (
                   <div className="p-3 text-sm text-slate-300/80">No additional leaderboard entries.</div>
                 ) : null}
                 {remainingLeaderboard.map((entry) => (
-                  <div key={entry.playerId} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
+                  <motion.div
+                    key={entry.playerId}
+                    layout="position"
+                    transition={{ type: 'spring', stiffness: 520, damping: 42, mass: 0.85 }}
+                    className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3 text-sm"
+                  >
                     <div className="flex items-center gap-3">
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-xs font-bold text-amber-100">{entry.rank}</span>
                       <PlayerNameRow name={entry.name} gender={getGenderForName(entry.name)} />
                     </div>
                     <span className="text-slate-300/80">{entry.wins} wins - {entry.gamesPlayed} games</span>
-                  </div>
+                  </motion.div>
                 ))}
-              </div>
+              </motion.div>
             </div>
           </div>
         </section>
