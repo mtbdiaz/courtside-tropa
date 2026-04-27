@@ -262,8 +262,11 @@ function readPersistedBatchUiSettings() {
     Array<Extract<NowCallingAnnouncement, { type: 'next-up' }>>
   >([]);
   const [activeNowCallingAnnouncement, setActiveNowCallingAnnouncement] = useState<NowCallingAnnouncement | null>(null);
+  const AUTO_FILL_STUCK_TIMEOUT_MS = 12000;
   const autoFillRunningRef = useRef(false);
   const autoFillIntervalRef = useRef<number | null>(null);
+  const autoFillWatchdogRef = useRef<number | null>(null);
+  const autoFillStartedAtMsRef = useRef<number | null>(null);
   const fillIdleCourtsRef = useRef(fillIdleCourts);
   const seenLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
   const announcedLiveCourtSignatureByIdRef = useRef<Record<string, string>>({});
@@ -691,9 +694,9 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    void ensureReadyMatches(activeBatch.batchId, 5);
+    void ensureReadyMatches(activeBatch.batchId, 4);
     const generationId = window.setInterval(() => {
-      void ensureReadyMatches(activeBatch.batchId, 5);
+      void ensureReadyMatches(activeBatch.batchId, 4);
     }, 5000);
 
     return () => {
@@ -705,8 +708,13 @@ function readPersistedBatchUiSettings() {
     if (autoFillIntervalRef.current !== null) {
       window.clearInterval(autoFillIntervalRef.current);
       autoFillIntervalRef.current = null;
-      autoFillRunningRef.current = false;
     }
+    if (autoFillWatchdogRef.current !== null) {
+      window.clearTimeout(autoFillWatchdogRef.current);
+      autoFillWatchdogRef.current = null;
+    }
+    autoFillStartedAtMsRef.current = null;
+    autoFillRunningRef.current = false;
 
     if (publicView || scoreOnly || !autoFillEnabled) {
       return;
@@ -714,12 +722,34 @@ function readPersistedBatchUiSettings() {
 
     const runAutoFill = () => {
       if (autoFillRunningRef.current) {
-        return;
+        const startedAt = autoFillStartedAtMsRef.current;
+        if (startedAt !== null && Date.now() - startedAt >= AUTO_FILL_STUCK_TIMEOUT_MS) {
+          // Recover from stuck runs (e.g., network stall) without requiring toggle spam.
+          autoFillRunningRef.current = false;
+          autoFillStartedAtMsRef.current = null;
+        } else {
+          return;
+        }
       }
 
       autoFillRunningRef.current = true;
-      Promise.resolve(fillIdleCourtsRef.current(activeBatch.batchId)).finally(() => {
+      autoFillStartedAtMsRef.current = Date.now();
+      if (autoFillWatchdogRef.current !== null) {
+        window.clearTimeout(autoFillWatchdogRef.current);
+      }
+      autoFillWatchdogRef.current = window.setTimeout(() => {
         autoFillRunningRef.current = false;
+        autoFillStartedAtMsRef.current = null;
+        autoFillWatchdogRef.current = null;
+      }, AUTO_FILL_STUCK_TIMEOUT_MS);
+
+      Promise.resolve(fillIdleCourtsRef.current(activeBatch.batchId)).finally(() => {
+        if (autoFillWatchdogRef.current !== null) {
+          window.clearTimeout(autoFillWatchdogRef.current);
+          autoFillWatchdogRef.current = null;
+        }
+        autoFillRunningRef.current = false;
+        autoFillStartedAtMsRef.current = null;
       });
     };
 
@@ -731,9 +761,14 @@ function readPersistedBatchUiSettings() {
         window.clearInterval(autoFillIntervalRef.current);
         autoFillIntervalRef.current = null;
       }
+      if (autoFillWatchdogRef.current !== null) {
+        window.clearTimeout(autoFillWatchdogRef.current);
+        autoFillWatchdogRef.current = null;
+      }
+      autoFillStartedAtMsRef.current = null;
       autoFillRunningRef.current = false;
     };
-  }, [activeBatch.batchId, autoFillEnabled, publicView, scoreOnly]);
+  }, [AUTO_FILL_STUCK_TIMEOUT_MS, activeBatch.batchId, autoFillEnabled, publicView, scoreOnly]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
@@ -802,6 +837,21 @@ function readPersistedBatchUiSettings() {
 
   const handlePlaceQueueOnCourt = async (courtId: string, matchId: string) => {
     await startQueuedMatchOnCourt(activeBatch.batchId, courtId, matchId);
+  };
+
+  const handleManualAutoFillCourts = async () => {
+    if (queueProcessing) {
+      return;
+    }
+
+    if (idleCourts.length === 0) {
+      return;
+    }
+
+    // Manual override: top up ready queue first, then push queued matches to idle courts.
+    const targetReady = Math.min(5, Math.max(activeBatch.queuedMatches.length, idleCourts.length));
+    await ensureReadyMatches(activeBatch.batchId, targetReady);
+    await fillIdleCourts(activeBatch.batchId);
   };
 
   const handleAddPlayer = () => {
@@ -1674,7 +1724,7 @@ function readPersistedBatchUiSettings() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => fillIdleCourts(activeBatch.batchId)}
+                  onClick={() => void handleManualAutoFillCourts()}
                   disabled={queueProcessing}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
