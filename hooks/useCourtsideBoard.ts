@@ -2011,7 +2011,8 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(batchId);
+    // Auto-fill runs on a timer; wait longer for queue lock so cycles are not skipped.
+    const lockAcquired = await acquireQueueLock(batchId, 7000);
     if (!lockAcquired) {
       return;
     }
