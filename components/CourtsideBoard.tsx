@@ -759,8 +759,8 @@ function readPersistedBatchUiSettings() {
       }, AUTO_FILL_STUCK_TIMEOUT_MS);
 
       try {
-        // Top up queue then fill idle courts. Both functions already use locks.
-        await ensureReadyMatches(activeBatch.batchId, 4);
+        // Top up queue enough to cover all idle courts and still keep 4 ready after assignment.
+        await ensureReadyMatches(activeBatch.batchId, Math.max(4, idleCourts.length + 4));
         // If PAUSE was activated while ensureReadyMatches ran, bail out before assigning courts.
         if (queuePaused) return;
         // On each 15s tick, fill all currently idle courts from the queue (top-first).
