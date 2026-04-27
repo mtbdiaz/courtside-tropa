@@ -691,9 +691,9 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    void ensureReadyMatches(activeBatch.batchId, 4);
+    void ensureReadyMatches(activeBatch.batchId, 5);
     const generationId = window.setInterval(() => {
-      void ensureReadyMatches(activeBatch.batchId, 4);
+      void ensureReadyMatches(activeBatch.batchId, 5);
     }, 5000);
 
     return () => {
@@ -773,7 +773,7 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    const target = Math.min(4, Math.max(1, activeBatch.queuedMatches.length + 1));
+    const target = Math.min(5, Math.max(1, activeBatch.queuedMatches.length + 1));
     await ensureReadyMatches(activeBatch.batchId, target);
   };
 
@@ -809,7 +809,7 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    addSinglePlayer(playerName, playerGender as 'M' | 'F');
+    addSinglePlayer(activeBatch.batchId, playerName, playerGender);
     setPlayerName('');
   };
 
@@ -823,7 +823,7 @@ function readPersistedBatchUiSettings() {
       return;
     }
 
-    addBulk(activeBatch.batchId, names, bulkGender as 'M' | 'F');
+    addBulk(activeBatch.batchId, names, bulkGender);
     setBulkNames('');
   };
 
@@ -970,22 +970,6 @@ function readPersistedBatchUiSettings() {
                   {inactiveCourtCount} inactive
                 </span>
               </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {[1, 2].map((batchId) => (
-                <button
-                  key={batchId}
-                  type="button"
-                  onClick={() => setActiveBatchId(batchId as BatchId)}
-                  className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
-                    activeBatch.batchId === batchId
-                      ? 'border-amber-300/50 bg-amber-300/15 text-amber-100'
-                      : 'border-white/10 bg-white/5 text-slate-200/80 hover:bg-white/10'
-                  }`}
-                >
-                  Batch {batchId}
-                </button>
-              ))}
             </div>
           </div>
         </section>
@@ -1642,7 +1626,7 @@ function readPersistedBatchUiSettings() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 4 when not paused.</div>
+                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 5 when not paused.</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1891,7 +1875,7 @@ function readPersistedBatchUiSettings() {
             <h3 className="text-xl font-semibold text-white">Player Status</h3>
 
             <div className="mt-4">
-              <h4 className="text-sm font-semibold text-amber-100">Currently Playing</h4>
+              <h4 className="text-sm font-semibold text-amber-100">Currently Playing ({playingPlayers.length})</h4>
               <div className="mt-2 flex flex-wrap gap-2">
                 {playingPlayers.length === 0 ? <span className="text-sm text-slate-300/80">None</span> : null}
                 {playingPlayers.map((name) => (
@@ -1903,7 +1887,7 @@ function readPersistedBatchUiSettings() {
             </div>
 
             <div className="mt-5">
-              <h4 className="text-sm font-semibold text-amber-100">On Break</h4>
+              <h4 className="text-sm font-semibold text-amber-100">On Break ({breakPlayers.length})</h4>
               <div className="mt-2 max-h-48 space-y-2 overflow-auto pr-1">
                 {breakPlayers.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
                 {breakPlayers.map((player) => (
@@ -1923,7 +1907,7 @@ function readPersistedBatchUiSettings() {
             </div>
 
             <div className="mt-5">
-              <h4 className="text-sm font-semibold text-amber-100">In Queue</h4>
+              <h4 className="text-sm font-semibold text-amber-100">In Queue ({inQueuePlayers.length})</h4>
               <div className="mt-2 max-h-48 space-y-2 overflow-auto pr-1">
                 {inQueuePlayers.length === 0 ? <div className="text-sm text-slate-300/80">None</div> : null}
                 {inQueuePlayers.map((player) => (
@@ -1936,7 +1920,7 @@ function readPersistedBatchUiSettings() {
             </div>
 
             <div className="mt-5">
-              <h4 className="text-sm font-semibold text-amber-100">Available Players</h4>
+              <h4 className="text-sm font-semibold text-amber-100">Available Players ({availableForCustom.length})</h4>
               <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
                 {availableForCustom.map((player) => (
                   <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">

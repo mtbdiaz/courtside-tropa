@@ -89,6 +89,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function queueLockUntil(leaseMs: number) {
+  return new Date(Date.now() + leaseMs).toISOString();
+}
+
 function winnerToAB(winner: 'team1' | 'team2' | null): 'A' | 'B' | 'TBD' {
   if (winner === 'team1') {
     return 'A';
@@ -937,8 +941,19 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const loadAgainRef = useRef(false);
   const loadRevisionRef = useRef(0);
   const queueMutationLockRef = useRef(false);
+  const queueLockHolderRef = useRef('queue-lock-holder');
+  const realtimeLoadTimerRef = useRef<number | null>(null);
   const pendingPlayerStatusRef = useRef<Map<string, 'checked-in' | 'break'>>(new Map());
   const toggleSyncTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (globalThis.crypto?.randomUUID) {
+      queueLockHolderRef.current = `queue-lock-${globalThis.crypto.randomUUID()}`;
+      return;
+    }
+
+    queueLockHolderRef.current = `queue-lock-${Date.now().toString(36)}`;
+  }, []);
 
   const clearActionError = useCallback(() => {
     setLastActionError(null);
@@ -949,7 +964,90 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     setLastActionError(message);
   }, []);
 
-  const acquireQueueLock = useCallback(async (maxWaitMs = 1200) => {
+  const acquireDistributedQueueLock = useCallback(async (batchId: BatchId, maxWaitMs = 1200, leaseMs = 8000) => {
+    const supabase = supabaseRef.current;
+    const dbBatchId = batchDbIdRef.current[batchId];
+    if (!supabase || !dbBatchId) {
+      return false;
+    }
+
+    const started = Date.now();
+    while (Date.now() - started < maxWaitMs) {
+      const now = nowIso();
+      const lockUntil = queueLockUntil(leaseMs);
+
+      const { data: updatedLock, error: updateError } = await supabase
+        .from('batch_operation_locks')
+        .update({
+          lock_key: 'queue',
+          holder_id: queueLockHolderRef.current,
+          locked_until: lockUntil,
+          updated_at: now,
+        })
+        .eq('batch_id', dbBatchId)
+        .or(`locked_until.is.null,locked_until.lt.${now}`)
+        .select('batch_id')
+        .maybeSingle();
+
+      if (updateError?.code === 'PGRST204' || updateError?.code === '42P01') {
+        // Lock table not available yet. Fall back to local lock behavior.
+        return true;
+      }
+
+      if (updatedLock?.batch_id) {
+        return true;
+      }
+
+      const { data: insertedLock, error: insertError } = await supabase
+        .from('batch_operation_locks')
+        .insert({
+          batch_id: dbBatchId,
+          lock_key: 'queue',
+          holder_id: queueLockHolderRef.current,
+          locked_until: lockUntil,
+          updated_at: now,
+        })
+        .select('batch_id')
+        .maybeSingle();
+
+      if (insertError?.code === 'PGRST204' || insertError?.code === '42P01') {
+        return true;
+      }
+
+      if (insertedLock?.batch_id) {
+        return true;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 80);
+      });
+    }
+
+    return false;
+  }, []);
+
+  const releaseDistributedQueueLock = useCallback(async (batchId: BatchId) => {
+    const supabase = supabaseRef.current;
+    const dbBatchId = batchDbIdRef.current[batchId];
+    if (!supabase || !dbBatchId) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('batch_operation_locks')
+      .update({
+        locked_until: nowIso(),
+        updated_at: nowIso(),
+      })
+      .eq('batch_id', dbBatchId)
+      .eq('holder_id', queueLockHolderRef.current);
+
+    if (error?.code === 'PGRST204' || error?.code === '42P01') {
+      return;
+    }
+  }, []);
+
+  const acquireQueueLock = useCallback(async (batchId: BatchId, maxWaitMs = 1200) => {
     const started = Date.now();
     while (queueMutationLockRef.current) {
       if (Date.now() - started >= maxWaitMs) {
@@ -962,14 +1060,21 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
     queueMutationLockRef.current = true;
+    const distributedLockAcquired = await acquireDistributedQueueLock(batchId, maxWaitMs);
+    if (!distributedLockAcquired) {
+      queueMutationLockRef.current = false;
+      return false;
+    }
+
     setQueueProcessing(true);
     return true;
-  }, []);
+  }, [acquireDistributedQueueLock]);
 
-  const releaseQueueLock = useCallback(() => {
+  const releaseQueueLock = useCallback((batchId: BatchId) => {
     queueMutationLockRef.current = false;
     setQueueProcessing(false);
-  }, []);
+    void releaseDistributedQueueLock(batchId);
+  }, [releaseDistributedQueueLock]);
 
   const activeBatch = snapshot.batches[snapshot.activeBatchId];
 
@@ -1262,6 +1367,17 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
   }, [activeModes, isReady, initialBatchId]);
 
+  const scheduleRealtimeLoad = useCallback(() => {
+    if (realtimeLoadTimerRef.current !== null) {
+      return;
+    }
+
+    realtimeLoadTimerRef.current = window.setTimeout(() => {
+      realtimeLoadTimerRef.current = null;
+      void loadFromDatabase();
+    }, 140);
+  }, [loadFromDatabase]);
+
   const withBatchDbId = useCallback((batchId: BatchId) => batchDbIdRef.current[batchId], []);
 
   const setActiveBatchId = useCallback((batchId: BatchId) => {
@@ -1374,9 +1490,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   }, [clearActionError, loadFromDatabase, reportActionError, snapshot.batches, withBatchDbId]);
 
   const addSinglePlayer = useCallback(
-    async (name: string, gender: Gender) => {
+    async (batchId: BatchId, name: string, gender: Gender) => {
       const supabase = supabaseRef.current;
-      const dbBatchId = withBatchDbId(activeBatch.batchId);
+      const dbBatchId = withBatchDbId(batchId);
       if (!supabase || !dbBatchId) return;
 
       // 1. GHOST MATCH FIX: Find the current lowest matches for active players
@@ -1412,7 +1528,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         void loadFromDatabase();
       }
     },
-    [activeBatch.batchId, loadFromDatabase, reportActionError]
+    [loadFromDatabase, reportActionError, withBatchDbId]
   );
 
   const addBulk = useCallback(async (batchId: BatchId, names: string[], gender: Gender) => {
@@ -1642,9 +1758,13 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
     const dbBatchId = withBatchDbId(batchId);
 
+    if (!dbBatchId) {
+      return;
+    }
+
     await Promise.all([
-      supabase.from('players').update({ pair_id: secondPlayerId }).eq('id', firstPlayerId),
-      supabase.from('players').update({ pair_id: firstPlayerId }).eq('id', secondPlayerId),
+      supabase.from('players').update({ pair_id: secondPlayerId }).eq('id', firstPlayerId).eq('batch_id', dbBatchId),
+      supabase.from('players').update({ pair_id: firstPlayerId }).eq('id', secondPlayerId).eq('batch_id', dbBatchId),
     ]);
 
     if (dbBatchId) {
@@ -1752,11 +1872,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       return;
     }
 
-    // 4. Safe to lock the queue and proceed
-    setQueueProcessing(true);
-
-
-    const lockAcquired = await acquireQueueLock(5000);
+    const lockAcquired = await acquireQueueLock(batchId, 5000);
     if (!lockAcquired) {
       return;
     }
@@ -1882,9 +1998,9 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
+  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId, queueProcessing]);
 
   const moveQueueUnit = useCallback(async (batchId: BatchId, matchId: string, direction: 'up' | 'down') => {
     clearActionError();
@@ -1895,7 +2011,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock();
+    const lockAcquired = await acquireQueueLock(batchId);
     if (!lockAcquired) {
       return;
     }
@@ -1936,7 +2052,7 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
@@ -1957,6 +2073,7 @@ const stats = getPlayerStats(batch);
       .from('matches')
       .select('team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id')
       .eq('id', matchId)
+      .eq('batch_id', dbBatchId)
       .single();
 
     const playerIds = [
@@ -1985,13 +2102,13 @@ const stats = getPlayerStats(batch);
     const historyMatchColumn = historyMatchIdColumnRef.current;
 
     await Promise.all([
-      supabase.from('matches').delete().eq('id', matchId),
-      supabase.from('match_history').delete().eq(historyMatchColumn, matchId),
+      supabase.from('matches').delete().eq('id', matchId).eq('batch_id', dbBatchId),
+      supabase.from('match_history').delete().eq(historyMatchColumn, matchId).eq('batch_id', dbBatchId),
       supabase.from('courts').update({
         status: 'free',
         current_match_id: null,
         start_time: null,
-      }).eq('id', courtId),
+      }).eq('id', courtId).eq('batch_id', dbBatchId),
     ]);
 
     await loadFromDatabase();
@@ -2012,7 +2129,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock();
+    const lockAcquired = await acquireQueueLock(batchId);
     if (!lockAcquired) {
       return;
     }
@@ -2108,7 +2225,7 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
@@ -2133,10 +2250,17 @@ const stats = getPlayerStats(batch);
     const matchId = court.matchId;
     const winner = scoreToWinner(scoreA, scoreB);
 
+    const dbBatchId = withBatchDbId(batchId);
+    if (!dbBatchId) {
+      reportActionError('Save score failed: missing batch mapping.');
+      return;
+    }
+
     const { data: matchRow } = await supabase
       .from('matches')
       .select('team1_player1_id,team1_player2_id,team2_player1_id,team2_player2_id')
       .eq('id', matchId)
+      .eq('batch_id', dbBatchId)
       .single();
 
     await supabase.from('matches').update({
@@ -2145,7 +2269,7 @@ const stats = getPlayerStats(batch);
       score_team1: scoreA,
       score_team2: scoreB,
       winner_team: winner,
-    }).eq('id', matchId);
+    }).eq('id', matchId).eq('batch_id', dbBatchId);
 
     const playerIds = [
       matchRow?.team1_player1_id,
@@ -2165,7 +2289,7 @@ const stats = getPlayerStats(batch);
               status: 'checked-in',
             })
             .eq('id', id)
-            .eq('batch_id', withBatchDbId(batchId)),
+            .eq('batch_id', dbBatchId),
         ),
       );
     }
@@ -2174,17 +2298,17 @@ const stats = getPlayerStats(batch);
       status: 'free',
       current_match_id: null,
       start_time: null,
-    }).eq('id', courtId);
+    }).eq('id', courtId).eq('batch_id', dbBatchId);
 
     const players = snapshot.batches[batchId].players;
     const toName = (id: string | null | undefined) => players.find((entry) => entry.id === id)?.name ?? null;
 
     const historyMatchColumn = historyMatchIdColumnRef.current;
 
-    await supabase.from('match_history').delete().eq(historyMatchColumn, matchId);
+    await supabase.from('match_history').delete().eq(historyMatchColumn, matchId).eq('batch_id', dbBatchId);
 
     await supabase.from('match_history').insert({
-      batch_id: withBatchDbId(batchId),
+      batch_id: dbBatchId,
       [historyMatchColumn]: matchId,
       court_number: Number(court.label.replace('Court ', '')),
       team1_player1_name: toName(matchRow?.team1_player1_id),
@@ -2202,7 +2326,11 @@ const stats = getPlayerStats(batch);
 
   const editScore = useCallback(async (batchId: BatchId, matchId: string, scoreA: number | null, scoreB: number | null) => {
     const supabase = supabaseRef.current;
+    const dbBatchId = withBatchDbId(batchId);
     if (!supabase) {
+      return;
+    }
+    if (!dbBatchId) {
       return;
     }
 
@@ -2215,21 +2343,21 @@ const stats = getPlayerStats(batch);
         score_team1: scoreA,
         score_team2: scoreB,
         winner_team: winner,
-      }).eq('id', matchId),
+      }).eq('id', matchId).eq('batch_id', dbBatchId),
       supabase.from('match_history').update({
         score_team1: scoreA,
         score_team2: scoreB,
         winner_team: winner,
-      }).eq(historyMatchColumn, matchId),
+      }).eq(historyMatchColumn, matchId).eq('batch_id', dbBatchId),
       supabase.from('match_history').update({
         score_team1: scoreA,
         score_team2: scoreB,
         winner_team: winner,
-      }).eq('id', matchId),
+      }).eq('id', matchId).eq('batch_id', dbBatchId),
     ]);
 
     await loadFromDatabase();
-  }, [loadFromDatabase]);
+  }, [loadFromDatabase, withBatchDbId]);
 
   const removeQueueMatch = useCallback(async (batchId: BatchId, sourceUnitIds: string[]) => {
     const supabase = supabaseRef.current;
@@ -2278,7 +2406,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock();
+    const lockAcquired = await acquireQueueLock(batchId);
     if (!lockAcquired) {
       return;
     }
@@ -2425,7 +2553,7 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
@@ -2463,7 +2591,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock();
+    const lockAcquired = await acquireQueueLock(batchId);
     if (!lockAcquired) {
       return;
     }
@@ -2524,7 +2652,7 @@ const stats = getPlayerStats(batch);
 
     await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
@@ -2543,7 +2671,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock();
+    const lockAcquired = await acquireQueueLock(batchId);
     if (!lockAcquired) {
       return;
     }
@@ -2582,7 +2710,7 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, snapshot.batches, withBatchDbId]);
 
@@ -2595,7 +2723,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(2000);
+    const lockAcquired = await acquireQueueLock(batchId, 2000);
     if (!lockAcquired) {
       reportActionError('Delete all players failed: queue is busy, please try again.');
       return;
@@ -2635,7 +2763,7 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
@@ -2648,7 +2776,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(2000);
+    const lockAcquired = await acquireQueueLock(batchId, 2000);
     if (!lockAcquired) {
       reportActionError('Set all players to break failed: queue is busy, please try again.');
       return;
@@ -2689,7 +2817,7 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
@@ -2702,7 +2830,7 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(2000);
+    const lockAcquired = await acquireQueueLock(batchId, 2000);
     if (!lockAcquired) {
       reportActionError('Delete match history failed: queue is busy, please try again.');
       return;
@@ -2730,7 +2858,7 @@ const stats = getPlayerStats(batch);
 
       await loadFromDatabase();
     } finally {
-      releaseQueueLock();
+      releaseQueueLock(batchId);
     }
   }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
 
@@ -2750,19 +2878,40 @@ const stats = getPlayerStats(batch);
 
     void loadFromDatabase();
 
+    const handleRealtimeChange = (payload: { new?: { batch_id?: string | null }; old?: { batch_id?: string | null } }) => {
+      const rowBatchId = payload.new?.batch_id ?? payload.old?.batch_id ?? null;
+      if (!rowBatchId) {
+        scheduleRealtimeLoad();
+        return;
+      }
+
+      const knownBatchIds = Object.values(batchDbIdRef.current).filter(Boolean) as string[];
+      if (knownBatchIds.includes(rowBatchId)) {
+        scheduleRealtimeLoad();
+      }
+    };
+
     const channel = supabase
       .channel('courtside-normalized')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, () => void loadFromDatabase())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, () => void loadFromDatabase())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'courts' }, () => void loadFromDatabase())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => void loadFromDatabase())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_history' }, () => void loadFromDatabase())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, () => scheduleRealtimeLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'courts' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_history' }, handleRealtimeChange)
       .subscribe();
 
     return () => {
+      if (realtimeLoadTimerRef.current !== null) {
+        window.clearTimeout(realtimeLoadTimerRef.current);
+        realtimeLoadTimerRef.current = null;
+      }
+      if (toggleSyncTimerRef.current !== null) {
+        window.clearTimeout(toggleSyncTimerRef.current);
+        toggleSyncTimerRef.current = null;
+      }
       void supabase.removeChannel(channel);
     };
-  }, [loadFromDatabase]);
+  }, [loadFromDatabase, scheduleRealtimeLoad]);
 
   const batchCounts = useMemo(() => getBatchCounts(activeBatch), [activeBatch]);
   const queueUnits = useMemo(() => resolveQueueUnits(activeBatch), [activeBatch]);

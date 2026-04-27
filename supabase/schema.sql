@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS match_history (
   notes TEXT
 );
 
+-- 7. Batch operation locks (prevents duplicate queue/autofill work across admins)
+CREATE TABLE IF NOT EXISTS batch_operation_locks (
+  batch_id UUID PRIMARY KEY REFERENCES batches(id) ON DELETE CASCADE,
+  lock_key TEXT NOT NULL DEFAULT 'queue',
+  holder_id TEXT,
+  locked_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- =============================================
 -- INDEXES (Performance for 80-100 players)
 -- =============================================
@@ -112,6 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_matches_locked ON matches(is_locked);
 CREATE INDEX IF NOT EXISTS idx_courts_batch ON courts(batch_id);
 CREATE INDEX IF NOT EXISTS idx_courts_batch_active ON courts(batch_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_match_history_batch ON match_history(batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_operation_locks_until ON batch_operation_locks(locked_until);
 
 -- Backfill for existing databases where is_active column doesn't exist yet
 ALTER TABLE courts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
@@ -146,6 +156,7 @@ ALTER TABLE players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE courts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE matches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE match_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE batch_operation_locks ENABLE ROW LEVEL SECURITY;
 
 -- Realtime publication (safe for reruns)
 DO $$
@@ -166,6 +177,7 @@ ALTER TABLE courts REPLICA IDENTITY FULL;
 ALTER TABLE matches REPLICA IDENTITY FULL;
 ALTER TABLE match_history REPLICA IDENTITY FULL;
 ALTER TABLE batches REPLICA IDENTITY FULL;
+ALTER TABLE batch_operation_locks REPLICA IDENTITY FULL;
 
 -- Admin (authenticated) full access
 DROP POLICY IF EXISTS "Admin full access" ON events;
@@ -180,6 +192,8 @@ DROP POLICY IF EXISTS "Admin full access" ON matches;
 CREATE POLICY "Admin full access" ON matches FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "Admin full access" ON match_history;
 CREATE POLICY "Admin full access" ON match_history FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Admin full access" ON batch_operation_locks;
+CREATE POLICY "Admin full access" ON batch_operation_locks FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Temporary public write access for event operations (admin UI can function with anon session)
 DROP POLICY IF EXISTS "Public write events" ON events;
@@ -194,6 +208,8 @@ DROP POLICY IF EXISTS "Public write matches" ON matches;
 CREATE POLICY "Public write matches" ON matches FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "Public write history" ON match_history;
 CREATE POLICY "Public write history" ON match_history FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public write operation locks" ON batch_operation_locks;
+CREATE POLICY "Public write operation locks" ON batch_operation_locks FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- Public read-only for queue view (players on phones)
 DROP POLICY IF EXISTS "Public read queue" ON players;
