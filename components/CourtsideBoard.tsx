@@ -760,7 +760,7 @@ function readPersistedBatchUiSettings() {
 
       try {
         // Top up queue enough to cover all idle courts and still keep 4 ready after assignment.
-        await ensureReadyMatches(activeBatch.batchId, Math.max(4, idleCourts.length + 4));
+        await ensureReadyMatches(activeBatch.batchId, Math.max(4, idleCourts.length + 2));
         // If PAUSE was activated while ensureReadyMatches ran, bail out before assigning courts.
         if (queuePaused) return;
         // On each 15s tick, fill all currently idle courts from the queue (top-first).
