@@ -698,9 +698,26 @@ function readPersistedBatchUiSettings() {
   const topLeaderboard = leaderboard.slice(0, 3);
   const remainingLeaderboard = leaderboard.slice(3);
 
-  // NOTE: Background 5s generator removed. Auto-fill (below) is the single authoritative
-  // automatic runner and will be started only when explicitly enabled. This avoids
-  // overlapping timers and keeps PAUSE semantics simple (PAUSE blocks all automation).
+  // Automatic queue top-up (one-by-one) when ready queue is below 4.
+  // Runs only when auto-fill is OFF, and always respects PAUSE.
+  useEffect(() => {
+    if (publicView || scoreOnly || queuePaused || autoFillEnabled) {
+      return;
+    }
+
+    const topUpOnce = () => {
+      if (activeBatch.queuedMatches.length < 4) {
+        void ensureReadyMatches(activeBatch.batchId, 4);
+      }
+    };
+
+    topUpOnce();
+    const generationId = window.setInterval(topUpOnce, 5000);
+
+    return () => {
+      window.clearInterval(generationId);
+    };
+  }, [activeBatch.batchId, activeBatch.queuedMatches.length, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
 
   useEffect(() => {
     // Clear any previously running timers/watchdogs/starter timeouts
@@ -751,7 +768,7 @@ function readPersistedBatchUiSettings() {
 
       try {
         // Top up queue then fill idle courts. Both functions already use locks.
-        await ensureReadyMatches(activeBatch.batchId, 5);
+        await ensureReadyMatches(activeBatch.batchId, 4);
         // If PAUSE was activated while ensureReadyMatches ran, bail out before assigning courts.
         if (queuePaused) return;
         await fillIdleCourtsRef.current(activeBatch.batchId);
@@ -844,14 +861,14 @@ function readPersistedBatchUiSettings() {
     if (now - last < MANUAL_GENERATE_DEBOUNCE_MS) return;
     lastManualGenerateAtRef.current = now;
 
-    if (queueProcessing || activeBatch.queuedMatches.length >= 5) {
+    if (queueProcessing || activeBatch.queuedMatches.length >= 4) {
       return;
     }
 
     // If auto-fill is currently running, prefer auto-fill (no manual overlap)
     if (autoFillRunningRef.current) return;
 
-    const target = Math.min(5, Math.max(1, activeBatch.queuedMatches.length + 1));
+    const target = Math.min(4, Math.max(1, activeBatch.queuedMatches.length + 1));
     await ensureReadyMatches(activeBatch.batchId, target);
   };
 
@@ -899,7 +916,7 @@ function readPersistedBatchUiSettings() {
     if (autoFillEnabled && autoFillRunningRef.current) return;
 
     // Manual override: top up ready queue first, then push queued matches to idle courts.
-    const targetReady = Math.min(5, Math.max(activeBatch.queuedMatches.length, idleCourts.length));
+    const targetReady = Math.min(4, Math.max(activeBatch.queuedMatches.length, idleCourts.length));
     await ensureReadyMatches(activeBatch.batchId, targetReady);
     await fillIdleCourts(activeBatch.batchId);
   };
@@ -1749,7 +1766,7 @@ function readPersistedBatchUiSettings() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">Queue</h3>
-                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps at least 5 when not paused.</div>
+                <div className="mt-1 text-xs text-slate-300/80">Queue contains ready matches. Auto-generation keeps up to 4 when not paused.</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1790,7 +1807,7 @@ function readPersistedBatchUiSettings() {
                 <button
                   type="button"
                   onClick={handleGenerateOneQueue}
-                  disabled={queueProcessing || activeBatch.queuedMatches.length >= 5 || batchCounts.checkedIn < 4}
+                  disabled={queueProcessing || activeBatch.queuedMatches.length >= 4 || batchCounts.checkedIn < 4}
                   className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100/90 transition hover:bg-white/10"
                 >
                   Generate 1 Queue
