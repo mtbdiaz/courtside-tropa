@@ -771,8 +771,8 @@ function readPersistedBatchUiSettings() {
         await ensureReadyMatches(activeBatch.batchId, 4);
         // If PAUSE was activated while ensureReadyMatches ran, bail out before assigning courts.
         if (queuePaused) return;
-        // One-by-one assignment for public queue clarity (preserves NOW CALLING visibility).
-        await fillIdleCourtsRef.current(activeBatch.batchId, 1);
+        // On each 15s tick, fill all currently idle courts from the queue (top-first).
+        await fillIdleCourtsRef.current(activeBatch.batchId);
       } finally {
         if (autoFillWatchdogRef.current !== null) {
           window.clearTimeout(autoFillWatchdogRef.current);
