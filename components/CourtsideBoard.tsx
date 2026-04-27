@@ -698,8 +698,9 @@ function readPersistedBatchUiSettings() {
   const topLeaderboard = leaderboard.slice(0, 3);
   const remainingLeaderboard = leaderboard.slice(3);
 
-  // Automatic queue top-up (one-by-one) when ready queue is below 4.
+  // Automatic queue top-up when ready queue is below 4.
   // Runs only when auto-fill is OFF, and always respects PAUSE.
+  // Fast retry cadence keeps queue responsive right after removals/completions.
   useEffect(() => {
     if (publicView || scoreOnly || queuePaused || autoFillEnabled) {
       return;
@@ -712,7 +713,7 @@ function readPersistedBatchUiSettings() {
     };
 
     topUpOnce();
-    const generationId = window.setInterval(topUpOnce, 5000);
+    const generationId = window.setInterval(topUpOnce, 800);
 
     return () => {
       window.clearInterval(generationId);
@@ -794,9 +795,9 @@ function readPersistedBatchUiSettings() {
       // Start steady 15s interval after initial delayed run
       autoFillIntervalRef.current = window.setInterval(() => {
         void runAutoFill();
-      }, 15000);
+      }, 10000);
       starterTimeout = null;
-    }, 15000);
+    }, 10000);
 
     return () => {
       if (starterTimeout !== null) {
