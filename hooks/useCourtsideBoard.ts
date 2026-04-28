@@ -93,6 +93,18 @@ function queueLockUntil(leaseMs: number) {
   return new Date(Date.now() + leaseMs).toISOString();
 }
 
+function isQueuePausedByBatch(batchId: BatchId) {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const pausedMap = (window as typeof window & {
+    __COURTSIDE_QUEUE_PAUSED_BY_BATCH?: Partial<Record<BatchId, boolean>>;
+  }).__COURTSIDE_QUEUE_PAUSED_BY_BATCH;
+
+  return Boolean(pausedMap?.[batchId]);
+}
+
 function winnerToAB(winner: 'team1' | 'team2' | null): 'A' | 'B' | 'TBD' {
   if (winner === 'team1') {
     return 'A';
@@ -262,89 +274,6 @@ function toMatchPreview(match: MatchRow, playersById: Map<string, Player>, index
   };
 }
 
-function generateTeamings(ids: [string, string, string, string]) {
-  return [
-    [[ids[0], ids[1]], [ids[2], ids[3]]],
-    [[ids[0], ids[2]], [ids[1], ids[3]]],
-    [[ids[0], ids[3]], [ids[1], ids[2]]],
-  ] as Array<[[string, string], [string, string]]>;
-}
-
-function chooseFairReadyMatch(
-  availablePlayers: Player[],
-  stats: ReturnType<typeof getPlayerStats>,
-): { teamA: [string, string]; teamB: [string, string] } | null {
-  if (availablePlayers.length < 4) {
-    return null;
-  }
-
-  const ranked = [...availablePlayers].sort((a, b) => {
-    const aStats = stats.get(a.id);
-    const bStats = stats.get(b.id);
-    const gameDiff = (aStats?.gamesPlayed ?? 0) - (bStats?.gamesPlayed ?? 0);
-    if (gameDiff !== 0) {
-      return gameDiff;
-    }
-    return a.createdAt.localeCompare(b.createdAt);
-  });
-
-  const pool = ranked.slice(0, Math.min(16, ranked.length));
-  let best: { score: number; teamA: [string, string]; teamB: [string, string] } | null = null;
-
-  for (let i = 0; i < pool.length - 3; i += 1) {
-    for (let j = i + 1; j < pool.length - 2; j += 1) {
-      for (let k = j + 1; k < pool.length - 1; k += 1) {
-        for (let l = k + 1; l < pool.length; l += 1) {
-          const quartet = [pool[i], pool[j], pool[k], pool[l]] as [Player, Player, Player, Player];
-          const ids = quartet.map((player) => player.id) as [string, string, string, string];
-          const gamesSum = ids.reduce((sum, id) => sum + (stats.get(id)?.gamesPlayed ?? 0), 0);
-
-          for (const [teamA, teamB] of generateTeamings(ids)) {
-            const teamAStatsA = stats.get(teamA[0]);
-            const teamAStatsB = stats.get(teamA[1]);
-            const teamBStatsA = stats.get(teamB[0]);
-            const teamBStatsB = stats.get(teamB[1]);
-
-            const teammateRepeat =
-              Number(teamAStatsA?.recentTeammates.includes(teamA[1])) +
-              Number(teamBStatsA?.recentTeammates.includes(teamB[1]));
-
-            const opponentRepeat =
-              Number(teamAStatsA?.recentOpponents.includes(teamB[0])) +
-              Number(teamAStatsA?.recentOpponents.includes(teamB[1])) +
-              Number(teamAStatsB?.recentOpponents.includes(teamB[0])) +
-              Number(teamAStatsB?.recentOpponents.includes(teamB[1]));
-
-            const teamAGames = (teamAStatsA?.gamesPlayed ?? 0) + (teamAStatsB?.gamesPlayed ?? 0);
-            const teamBGames = (teamBStatsA?.gamesPlayed ?? 0) + (teamBStatsB?.gamesPlayed ?? 0);
-            const teamImbalance = Math.abs(teamAGames - teamBGames);
-
-            const score = gamesSum * 100 + teammateRepeat * 40 + opponentRepeat * 15 + teamImbalance * 10;
-            const candidate = {
-              score,
-              teamA,
-              teamB,
-            };
-
-            if (!best || candidate.score < best.score) {
-              best = candidate;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (!best) {
-    return null;
-  }
-
-  return {
-    teamA: best.teamA,
-    teamB: best.teamB,
-  };
-}
-
 function matchTypeFromTeams(
   _batch: BatchSnapshot,
   teams: { teamA: [string, string]; teamB: [string, string] },
@@ -378,14 +307,14 @@ function chooseReadyMatchWithPairRules(
     if (consumed.has(player.id)) continue;
     const pStats = stats.get(player.id);
     const pMatches = (pStats?.gamesPlayed ?? 0); 
-    const pCooldown = (pStats as any)?.consecutiveMatches >= 2;
+    const pCooldown = (pStats?.consecutiveMatches ?? 0) >= 2;
 
     if (player.pairId) {
       const partner = (playersByPairId.get(player.pairId) ?? []).find(p => p.id !== player.id);
       if (partner && !consumed.has(partner.id)) {
         const partnerStats = stats.get(partner.id);
         const partnerMatches = (partnerStats?.gamesPlayed ?? 0);
-        const partnerCooldown = (partnerStats as any)?.consecutiveMatches >= 2;
+        const partnerCooldown = (partnerStats?.consecutiveMatches ?? 0) >= 2;
 
         units.push({
           kind: 'pair',
@@ -418,7 +347,7 @@ if (eligibleUnits.length === 0 && units.length >= 4) {
   return null;
 }
 
-  let L = Math.min(...eligibleUnits.map(u => u.matchCount));
+  const L = Math.min(...eligibleUnits.map(u => u.matchCount));
   
   // 4. APPLY FAIRNESS WINDOW (L and L+1)
   let windowUnits = eligibleUnits.filter(u => u.matchCount <= L + 1);
@@ -1882,12 +1811,10 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
       // This uses a small global flag set by the UI so the hook can abort in-progress runs.
       // (Prevents assignments from proceeding when an admin hits PAUSE mid-cycle.)
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const globalPaused = typeof window !== 'undefined' && (window as any).__COURTSIDE_QUEUE_PAUSED_BY_BATCH?.[batchId];
-        if (globalPaused) {
+        if (isQueuePausedByBatch(batchId)) {
           return;
         }
-      } catch (err) {
+      } catch {
         // ignore
       }
       const batch = snapshot.batches[batchId];
@@ -2149,12 +2076,10 @@ const stats = getPlayerStats(batch);
 
     try {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const globalPaused = typeof window !== 'undefined' && (window as any).__COURTSIDE_QUEUE_PAUSED_BY_BATCH?.[batchId];
-        if (globalPaused) {
+        if (isQueuePausedByBatch(batchId)) {
           return;
         }
-      } catch (err) {
+      } catch {
         // ignore
       }
       if (selectedPlayers && selectedPlayers.playerIds.length === 4) {

@@ -806,7 +806,7 @@ function readPersistedBatchUiSettings() {
       autoFillStartedAtMsRef.current = null;
       autoFillRunningRef.current = false;
     };
-  }, [AUTO_FILL_STUCK_TIMEOUT_MS, activeBatch.batchId, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly, fillIdleCourtsRef]);
+  }, [AUTO_FILL_STUCK_TIMEOUT_MS, activeBatch.batchId, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly, fillIdleCourtsRef, idleCourts.length]);
 
   const onToggleCustomPlayer = (playerId: string) => {
     const player = activeBatch.players.find((entry) => entry.id === playerId);
