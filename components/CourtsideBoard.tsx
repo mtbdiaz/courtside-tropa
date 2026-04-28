@@ -700,16 +700,16 @@ function readPersistedBatchUiSettings() {
   const remainingLeaderboard = deferredLeaderboard.slice(3);
 
   // Automatic queue top-up when ready queue is below 4.
-  // Runs only when auto-fill is OFF, and always respects PAUSE.
+  // Runs whenever the queue drops below 4, and always respects PAUSE.
   useEffect(() => {
-    if (publicView || scoreOnly || queuePaused || autoFillEnabled) {
+    if (publicView || scoreOnly || queuePaused) {
       return;
     }
 
     if (activeBatch.queuedMatches.length < 4) {
       void ensureReadyMatches(activeBatch.batchId, 4);
     }
-  }, [activeBatch.batchId, activeBatch.queuedMatches.length, autoFillEnabled, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
+  }, [activeBatch.batchId, activeBatch.queuedMatches.length, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
 
   useEffect(() => {
     // Clear any previously running timers/watchdogs/starter timeouts
