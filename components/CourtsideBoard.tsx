@@ -1068,17 +1068,17 @@ function readPersistedBatchUiSettings() {
     );
 
     return (
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pb-28 pt-6 sm:px-6 sm:pb-8 lg:py-8">
-        <section id="public-top" className="glass-panel scroll-mt-24 rounded-[1.6rem] p-4 sm:rounded-[2rem] sm:p-6">
-          <div className="flex flex-wrap items-end justify-between gap-4">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-3 pb-24 pt-4 sm:gap-6 sm:px-6 sm:pb-8 sm:pt-6 lg:py-8">
+        <section id="public-top" className="glass-panel scroll-mt-24 rounded-[1.4rem] p-3 sm:rounded-[2rem] sm:p-6">
+          <div className="flex flex-wrap items-end justify-between gap-3 sm:gap-4">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.28em] text-amber-200/70 sm:text-xs sm:tracking-[0.35em]">Public Queue</p>
-              <h2 className="text-display mt-2 text-2xl font-semibold leading-tight sm:text-4xl">Live Queue - Batch {activeBatch.batchId}</h2>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] sm:text-xs sm:tracking-[0.18em]">
-                <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-100 sm:px-3">
+              <p className="text-[9px] uppercase tracking-[0.24em] text-amber-200/70 sm:text-xs sm:tracking-[0.35em]">Public Queue</p>
+              <h2 className="text-display mt-1.5 text-[1.6rem] font-semibold leading-tight sm:mt-2 sm:text-4xl">Live Queue - Batch {activeBatch.batchId}</h2>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.12em] sm:mt-2 sm:text-xs sm:tracking-[0.18em]">
+                <span className="rounded-full border border-emerald-300/30 bg-emerald-500/10 px-2 py-0.5 text-emerald-100 sm:px-3 sm:py-1">
                   {activeCourts.length} active
                 </span>
-                <span className="rounded-full border border-slate-300/25 bg-slate-700/20 px-2.5 py-1 text-slate-200/90 sm:px-3">
+                <span className="rounded-full border border-slate-300/25 bg-slate-700/20 px-2 py-0.5 text-slate-200/90 sm:px-3 sm:py-1">
                   {inactiveCourtCount} inactive
                 </span>
               </div>
@@ -1086,17 +1086,17 @@ function readPersistedBatchUiSettings() {
           </div>
         </section>
 
-        <section id="public-now-calling" className="relative scroll-mt-24 overflow-hidden rounded-[2rem] border border-amber-300/35 bg-gradient-to-r from-amber-300/25 via-orange-300/25 to-rose-300/25 px-5 py-5 shadow-[0_12px_40px_rgba(251,191,36,0.2)] sm:px-8 sm:py-7">
-          <div className="pointer-events-none absolute -left-16 top-0 h-36 w-36 rounded-full bg-amber-200/20 blur-3xl" />
-          <div className="pointer-events-none absolute -right-16 bottom-0 h-36 w-36 rounded-full bg-rose-200/20 blur-3xl" />
+        <section id="public-now-calling" className="relative scroll-mt-24 overflow-hidden rounded-[1.6rem] border border-amber-300/35 bg-gradient-to-r from-amber-300/25 via-orange-300/25 to-rose-300/25 px-3 py-3 shadow-[0_12px_40px_rgba(251,191,36,0.2)] sm:rounded-[2rem] sm:px-8 sm:py-7">
+          <div className="pointer-events-none absolute -left-16 top-0 h-28 w-28 rounded-full bg-amber-200/20 blur-3xl sm:h-36 sm:w-36" />
+          <div className="pointer-events-none absolute -right-16 bottom-0 h-28 w-28 rounded-full bg-rose-200/20 blur-3xl sm:h-36 sm:w-36" />
 
-          <div className="relative space-y-4">
+          <div className="relative space-y-3 sm:space-y-4">
             <div className="flex items-center gap-3">
               <div className="flex h-3 w-3 items-center justify-center">
                 <span className="absolute h-3 w-3 animate-ping rounded-full bg-emerald-300/80" />
                 <span className="relative h-2.5 w-2.5 rounded-full bg-emerald-300" />
               </div>
-              <div className="text-[11px] font-black uppercase tracking-[0.3em] text-amber-100/90">Now Calling</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-100/90 sm:text-[11px] sm:tracking-[0.3em]">Now Calling</div>
             </div>
 
             {courtAssignedAnnouncement ? (
@@ -1107,25 +1107,25 @@ function readPersistedBatchUiSettings() {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.98, y: -8 }}
                   transition={{ duration: 0.3, ease: 'easeOut' }}
-                  className="rounded-[2rem] border-2 border-amber-300/70 bg-gradient-to-br from-amber-300/30 to-rose-300/20 p-6 shadow-[0_12px_36px_rgba(251,191,36,0.28)]"
+                  className="rounded-[1.5rem] border-2 border-amber-300/70 bg-gradient-to-br from-amber-300/30 to-rose-300/20 p-4 shadow-[0_12px_36px_rgba(251,191,36,0.28)] sm:rounded-[2rem] sm:p-6"
                 >
-                  <div className="text-center text-3xl font-black uppercase tracking-[0.2em] text-amber-50 drop-shadow-[0_4px_14px_rgba(0,0,0,0.35)] sm:text-4xl">
+                  <div className="text-center text-[1.45rem] font-black uppercase tracking-[0.14em] text-amber-50 drop-shadow-[0_4px_14px_rgba(0,0,0,0.35)] sm:text-4xl sm:tracking-[0.2em]">
                     GO TO COURT {courtAssignedAnnouncement.courtLabel.replace(/^Court\s*/i, '').trim() || courtAssignedAnnouncement.courtLabel}
                   </div>
 
-                  <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                    <div className="rounded-2xl border border-amber-200/45 bg-black/30 px-4 py-3">
+                  <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                    <div className="rounded-2xl border border-amber-200/45 bg-black/30 px-3 py-2.5 sm:px-4 sm:py-3">
                       <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-100/90">Team 1</div>
-                      <div className="mt-2">
+                      <div className="mt-1.5 sm:mt-2">
                         <TeamList players={courtAssignedAnnouncement.teamA} size="lg" getGender={getGenderForName} />
                       </div>
                     </div>
 
-                    <div className="text-center text-2xl font-black uppercase tracking-[0.35em] text-amber-100">VS</div>
+                    <div className="text-center text-[1.1rem] font-black uppercase tracking-[0.28em] text-amber-100 sm:text-2xl sm:tracking-[0.35em]">VS</div>
 
-                    <div className="rounded-2xl border border-amber-200/45 bg-black/30 px-4 py-3">
+                    <div className="rounded-2xl border border-amber-200/45 bg-black/30 px-3 py-2.5 sm:px-4 sm:py-3">
                       <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-100/90">Team 2</div>
-                      <div className="mt-2">
+                      <div className="mt-1.5 sm:mt-2">
                         <TeamList players={courtAssignedAnnouncement.teamB} size="lg" alignRight getGender={getGenderForName} />
                       </div>
                     </div>
@@ -1134,48 +1134,48 @@ function readPersistedBatchUiSettings() {
               </AnimatePresence>
             ) : nextMatch ? (
               <AnimatePresence mode="wait">
-                <motion.div key={nextMatch.id} layout className="space-y-4">
-                  <div className={`grid gap-4 ${isHighlighting ? 'lg:grid-cols-1' : 'lg:grid-cols-2'}`}>
+                <motion.div key={nextMatch.id} layout className="space-y-3 sm:space-y-4">
+                  <div className={`grid gap-3 ${isHighlighting ? 'lg:grid-cols-1' : 'lg:grid-cols-2'}`}>
                     <motion.div
                       layout
-                      className={`rounded-[2rem] border-2 p-5 shadow-[0_8px_32px_rgba(251,191,36,0.3)] ${
+                      className={`rounded-[1.5rem] border-2 p-4 shadow-[0_8px_32px_rgba(251,191,36,0.3)] sm:rounded-[2rem] sm:p-5 ${
                         isHighlighting
                           ? 'border-amber-300/70 bg-gradient-to-br from-amber-300/30 to-amber-400/15 lg:col-span-2'
                           : 'border-amber-300/60 bg-gradient-to-br from-amber-300/25 to-amber-400/10'
                       }`}
                     >
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-100">Match #1 (BE READY)</div>
-                        <div className="rounded-full bg-amber-300/30 px-3 py-1 text-xs font-bold text-amber-100">
+                      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-100 sm:text-xs sm:tracking-[0.3em]">Match #1 (BE READY)</div>
+                        <div className="rounded-full bg-amber-300/30 px-2.5 py-0.5 text-[10px] font-bold text-amber-100 sm:px-3 sm:py-1 sm:text-xs">
                           {nextTwoMatches[0]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
                         </div>
                       </div>
 
                       {isHighlighting ? (
-                        <div className="mb-4 text-center text-3xl font-black uppercase tracking-[0.2em] text-amber-50 drop-shadow-[0_4px_14px_rgba(0,0,0,0.35)] sm:text-4xl">
+                        <div className="mb-3 text-center text-[1.35rem] font-black uppercase tracking-[0.14em] text-amber-50 drop-shadow-[0_4px_14px_rgba(0,0,0,0.35)] sm:text-4xl sm:tracking-[0.2em]">
                           NEXT UP!
                         </div>
                       ) : null}
 
-                      <div className={isHighlighting ? 'grid gap-4 md:grid-cols-[1fr_auto_1fr]' : 'space-y-3'}>
-                        <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
+                      <div className={isHighlighting ? 'grid gap-3 md:grid-cols-[1fr_auto_1fr]' : 'space-y-2.5'}>
+                        <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-3 py-2.5 sm:px-4 sm:py-3">
                           <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 1</div>
-                          <div className="mt-2">
+                          <div className="mt-1.5 sm:mt-2">
                             <TeamList players={nextTwoMatches[0]?.teamA ?? []} size={isHighlighting ? 'lg' : 'sm'} getGender={getGenderForName} />
                           </div>
                         </div>
 
-                        <div className={`text-center font-black uppercase tracking-[0.35em] ${isHighlighting ? 'self-center text-amber-200 text-2xl' : 'text-amber-300/80'}`}>VS</div>
+                        <div className={`text-center font-black uppercase tracking-[0.28em] ${isHighlighting ? 'self-center text-[1.1rem] text-amber-200 sm:text-2xl sm:tracking-[0.35em]' : 'text-[0.95rem] text-amber-300/80'}`}>VS</div>
 
-                        <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-4 py-3">
+                        <div className="rounded-2xl border border-amber-300/40 bg-black/30 px-3 py-2.5 sm:px-4 sm:py-3">
                           <div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-200/90">Team 2</div>
-                          <div className="mt-2">
+                          <div className="mt-1.5 sm:mt-2">
                             <TeamList players={nextTwoMatches[0]?.teamB ?? []} size={isHighlighting ? 'lg' : 'sm'} alignRight getGender={getGenderForName} />
                           </div>
                         </div>
                       </div>
 
-                      <div className={`mt-4 rounded-xl border px-3 py-2 text-center font-bold ${nextOpenCourt ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-100' : 'border-slate-300/25 bg-slate-700/20 text-slate-200/90'} ${isHighlighting ? 'text-sm uppercase tracking-[0.2em]' : 'text-xs'}`}>
+                      <div className={`mt-3 rounded-xl border px-3 py-1.5 text-center font-bold ${nextOpenCourt ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-100' : 'border-slate-300/25 bg-slate-700/20 text-slate-200/90'} ${isHighlighting ? 'text-[10px] uppercase tracking-[0.18em] sm:text-sm sm:tracking-[0.2em]' : 'text-[10px] sm:text-xs'}`}>
                         {nextOpenCourt ? (isHighlighting ? nextOpenCourt.label : `Next active court: ${nextOpenCourt.label}`) : 'No active court available'}
                       </div>
                     </motion.div>
@@ -1185,29 +1185,29 @@ function readPersistedBatchUiSettings() {
                         <motion.div
                           key={nextTwoMatches[1].id}
                           layout
-                          className="rounded-[2rem] border border-white/20 bg-white/5 p-5"
+                          className="rounded-[1.5rem] border border-white/20 bg-white/5 p-4 sm:rounded-[2rem] sm:p-5"
                         >
-                          <div className="mb-3 flex items-center justify-between gap-2">
-                            <div className="text-xs font-bold uppercase tracking-[0.3em] text-white/70">Match #2 (Be Ready)</div>
-                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200/80">
+                          <div className="mb-2.5 flex items-center justify-between gap-2">
+                            <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-white/70 sm:text-xs sm:tracking-[0.3em]">Match #2 (Be Ready)</div>
+                            <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[10px] font-semibold text-slate-200/80 sm:px-3 sm:py-1 sm:text-xs">
                               {nextTwoMatches[1]?.mode === 'mixed' ? 'Mixed' : 'Custom'}
                             </div>
                           </div>
 
-                          <div className="space-y-2 text-sm">
+                          <div className="space-y-2 text-[0.92rem] sm:text-sm">
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
                               <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 1</div>
-                              <div className="mt-2">
-                                <TeamList players={nextTwoMatches[1]?.teamA ?? []} getGender={getGenderForName} />
+                              <div className="mt-1.5">
+                                <TeamList players={nextTwoMatches[1]?.teamA ?? []} size="sm" getGender={getGenderForName} />
                               </div>
                             </div>
 
-                            <div className="text-center text-xs font-bold uppercase tracking-[0.3em] text-white/50">VS</div>
+                            <div className="text-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-300/80">VS</div>
 
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
                               <div className="text-xs uppercase tracking-[0.25em] text-slate-400/80">Team 2</div>
-                              <div className="mt-2">
-                                <TeamList players={nextTwoMatches[1]?.teamB ?? []} alignRight getGender={getGenderForName} />
+                              <div className="mt-1.5">
+                                <TeamList players={nextTwoMatches[1]?.teamB ?? []} size="sm" alignRight getGender={getGenderForName} />
                               </div>
                             </div>
                           </div>
@@ -1218,82 +1218,93 @@ function readPersistedBatchUiSettings() {
                 </motion.div>
               </AnimatePresence>
             ) : (
-              <div className="text-center text-2xl font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-3xl">
-                NO READY MATCHES YET
+              <div className="rounded-[1.5rem] border border-white/10 bg-black/20 px-4 py-8 text-center sm:rounded-[2rem] sm:px-6 sm:py-10">
+                <div className="text-2xl font-black leading-snug text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] sm:text-3xl">NO READY MATCHES YET</div>
               </div>
             )}
           </div>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <article id="public-upcoming" className="glass-panel scroll-mt-24 rounded-[2rem] p-5 sm:p-6">
-            <h3 className="text-xl font-semibold text-white">Upcoming Matches</h3>
-            <div className="mt-4 space-y-3">
-              {upcomingMatches.length === 0 ? <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No ready matches yet.</div> : null}
-              {upcomingMatches.map((match, index) => (
-                <div key={match.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-amber-200/80">
-                      <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.75)]" />
-                      Ready match {index + 1}
-                    </div>
-                    <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-100/90">{match.mode === 'mixed' ? 'Mixed' : 'Custom'}</div>
-                  </div>
+        <section className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+          <article id="public-upcoming" className="glass-panel scroll-mt-24 rounded-[1.5rem] p-4 sm:rounded-[2rem] sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-white sm:text-xl">Upcoming Matches</h3>
+              <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-200/70 sm:text-xs">Queue</span>
+            </div>
 
-                  <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                    <TeamCard label="Team 1" players={match.teamA} getGender={getGenderForName} />
-                    <div className="text-center text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">VS</div>
-                    <TeamCard label="Team 2" players={match.teamB} alignRight getGender={getGenderForName} />
+            <div className="mt-3 space-y-3 sm:mt-4 sm:space-y-4">
+              {upcomingMatches.length > 0 ? (
+                upcomingMatches.map((match, index) => (
+                  <div key={match.id} className="rounded-[1.25rem] border border-white/10 bg-white/5 p-3 sm:rounded-[1.5rem] sm:p-4">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-amber-200/80 sm:text-xs sm:tracking-[0.25em]">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.75)]" />
+                        Ready match {index + 1}
+                      </div>
+                      <div className="rounded-full border border-white/10 bg-black/20 px-2.5 py-0.5 text-[10px] text-slate-100/90 sm:px-3 sm:py-1 sm:text-xs">
+                        {match.mode === 'mixed' ? 'Mixed' : 'Custom'}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <TeamCard label="Team 1" players={match.teamA} getGender={getGenderForName} />
+                      <div className="text-center text-[10px] font-semibold uppercase tracking-[0.3em] text-amber-200/70 sm:text-sm">VS</div>
+                      <TeamCard label="Team 2" players={match.teamB} alignRight getGender={getGenderForName} />
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <div className="rounded-[1.25rem] border border-white/10 bg-black/20 px-4 py-8 text-center text-sm text-slate-200/80">No ready matches yet.</div>
+              )}
             </div>
           </article>
 
-          <article id="public-current" className="glass-panel scroll-mt-24 rounded-[2rem] p-5 sm:p-6">
+          <article id="public-current" className="glass-panel scroll-mt-24 rounded-[1.5rem] p-4 sm:rounded-[2rem] sm:p-6">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-xl font-semibold text-white">Current Matches</h3>
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-amber-200/80">
+              <h3 className="text-lg font-semibold text-white sm:text-xl">Current Matches</h3>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-amber-200/80 sm:text-xs sm:tracking-[0.25em]">
                 <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.75)] animate-pulse" />
                 Live
               </div>
             </div>
-            <div className="mt-4 space-y-3">
-              {liveCourts.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300/80">No live matches.</div>
-              ) : null}
-              {liveCourts.map((court) => (
-                <div key={court.id} className="rounded-[1.5rem] border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-4 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.2)]">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold uppercase tracking-[0.28em] text-amber-200">{court.label}</span>
-                    {(() => {
-                      const timerTone = getTimerTone(court.startedAt, nowMs);
-                      return (
-                        <span className={`rounded-full border px-3 py-1 text-xs ${timerTone.className} ${timerTone.pulse ? 'animate-pulse' : ''}`}>
-                          {formatTimer(court.startedAt, nowMs)}
-                        </span>
-                      );
-                    })()}
-                  </div>
 
-                  <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                    <TeamCard label="Team 1" players={court.teamA} getGender={getGenderForName} />
-                    <div className="text-center text-xl font-black tracking-[0.45em] text-amber-200/80">VS</div>
-                    <TeamCard label="Team 2" players={court.teamB} alignRight getGender={getGenderForName} />
-                  </div>
-                </div>
-              ))}
+            <div className="mt-3 space-y-3 sm:mt-4 sm:space-y-4">
+              {liveCourts.length > 0 ? (
+                liveCourts.map((court) => {
+                  const timerTone = getTimerTone(court.startedAt, nowMs);
+
+                  return (
+                    <div key={court.id} className="rounded-[1.25rem] border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-3 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.2)] sm:rounded-[1.5rem] sm:p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold text-white">{court.label}</div>
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full border px-2.5 py-0.5 text-[10px] sm:px-3 sm:py-1 sm:text-xs ${timerTone.className} ${timerTone.pulse ? 'animate-pulse' : ''}`}>
+                            {formatTimer(court.startedAt, nowMs)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-3 text-[0.92rem] sm:text-sm">
+                        <TeamCard label="Team 1" players={court.teamA} getGender={getGenderForName} />
+                        <div className="text-center text-[10px] font-black uppercase tracking-[0.3em] text-amber-200/80 sm:text-sm">VS</div>
+                        <TeamCard label="Team 2" players={court.teamB} alignRight getGender={getGenderForName} />
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="rounded-[1.25rem] border border-white/10 bg-black/20 px-4 py-8 text-center text-sm text-slate-200/80">No active court available</div>
+              )}
             </div>
           </article>
         </section>
 
-        <section id="public-leaderboard" className="glass-panel scroll-mt-24 rounded-[2rem] p-5 sm:p-6">
+        <section id="public-leaderboard" className="glass-panel scroll-mt-24 rounded-[1.5rem] p-4 sm:rounded-[2rem] sm:p-6">
           <div className="flex items-center gap-3">
             <Trophy className="h-5 w-5 text-amber-300" />
-            <h3 className="text-xl font-semibold text-white">Leaderboard</h3>
+            <h3 className="text-lg font-semibold text-white sm:text-xl">Leaderboard</h3>
           </div>
 
-          <div className="mt-4 space-y-4">
+          <div className="mt-3 space-y-4 sm:mt-4">
             {topLeaderboard.length > 0 ? (
               <motion.div layout className="grid gap-3 lg:grid-cols-3">
                 {topLeaderboard.map((entry, index) => {
@@ -1308,14 +1319,14 @@ function readPersistedBatchUiSettings() {
                       key={entry.playerId}
                       layout="position"
                       transition={{ type: 'spring', stiffness: 520, damping: 42, mass: 0.85 }}
-                      className={`rounded-[1.5rem] border p-4 ${variants[index] ?? variants[2]}`}
+                      className={`rounded-[1.25rem] border p-3 sm:rounded-[1.5rem] sm:p-4 ${variants[index] ?? variants[2]}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-xs font-bold text-amber-100">{entry.rank}</span>
                           <PlayerNameRow name={entry.name} size="md" gender={getGenderForName(entry.name)} />
                         </div>
-                        <div className="text-right text-xs text-slate-200/80">
+                        <div className="text-right text-[10px] text-slate-200/80 sm:text-xs">
                           <div>{entry.wins} wins</div>
                           <div>{entry.gamesPlayed} games</div>
                         </div>
@@ -1326,7 +1337,7 @@ function readPersistedBatchUiSettings() {
               </motion.div>
             ) : null}
 
-            <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-3">
+            <div className="rounded-[1.25rem] border border-white/10 bg-white/5 p-3 sm:rounded-[1.5rem]">
               <motion.div layout className="max-h-72 space-y-2 overflow-auto pr-1">
                 {remainingLeaderboard.length === 0 ? (
                   <div className="p-3 text-sm text-slate-300/80">No additional leaderboard entries.</div>
