@@ -849,6 +849,26 @@ function normalizeSnapshot(input: {
   };
 }
 
+const SNAPSHOT_CACHE_KEY = 'courtside:snapshot:v2';
+
+function saveSnapshotToCache(snap: ReturnType<typeof createEmptyCourtsideSnapshot>) {
+  try {
+    localStorage.setItem(SNAPSHOT_CACHE_KEY, JSON.stringify(snap));
+  } catch { /* storage quota exceeded — ignore */ }
+}
+
+function loadSnapshotFromCache(): ReturnType<typeof createEmptyCourtsideSnapshot> | null {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ReturnType<typeof createEmptyCourtsideSnapshot>;
+    if (!parsed?.batches || !parsed?.activeBatchId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function useCourtsideBoard(initialBatchId: BatchId = 1) {
   const supabaseRef = useRef<ReturnType<typeof createSupabaseBrowserClient> | null>(null);
   const batchDbIdRef = useRef<Record<BatchId, string | null>>({ 1: null, 2: null });
@@ -1101,6 +1121,12 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
     }
 
       if (batchesError || playersError || courtsError || matchesError || historyError) {
+        if (!isReady) {
+          const cached = loadSnapshotFromCache();
+          if (cached) {
+            setSnapshot(cached);
+          }
+        }
         setSyncStatus('offline');
         setIsReady(true);
         return;
@@ -1280,6 +1306,9 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
         return;
       }
 
+      const savedActiveBatchId = isFirstLoad ? nextActiveBatchId : initialBatchId;
+      saveSnapshotToCache({ ...next, activeBatchId: savedActiveBatchId, lastUpdated: nowIso() });
+
       setSnapshot((current) => ({
         ...next,
         activeBatchId: isFirstLoad ? nextActiveBatchId : current.activeBatchId,
@@ -1298,7 +1327,7 @@ export function useCourtsideBoard(initialBatchId: BatchId = 1) {
 
   const scheduleRealtimeLoad = useCallback(() => {
     if (realtimeLoadTimerRef.current !== null) {
-      return;
+      window.clearTimeout(realtimeLoadTimerRef.current);
     }
 
     realtimeLoadTimerRef.current = window.setTimeout(() => {
@@ -2841,6 +2870,7 @@ const stats = getPlayerStats(batch);
       }
     };
 
+    let channelSubscribed = false;
     const channel = supabase
       .channel('courtside-normalized')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, () => scheduleRealtimeLoad())
@@ -2848,7 +2878,28 @@ const stats = getPlayerStats(batch);
       .on('postgres_changes', { event: '*', schema: 'public', table: 'courts' }, handleRealtimeChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, handleRealtimeChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_history' }, handleRealtimeChange)
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (channelSubscribed) {
+            // Re-subscribed after a drop — force a full sync.
+            scheduleRealtimeLoad();
+          }
+          channelSubscribed = true;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          setSyncStatus('offline');
+          channelSubscribed = false;
+        }
+      });
+
+    const handleOnline = () => {
+      setSyncStatus('loading');
+      void loadFromDatabaseRef.current();
+    };
+    const handleOffline = () => {
+      setSyncStatus('offline');
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
 
     return () => {
       if (realtimeLoadTimerRef.current !== null) {
@@ -2859,9 +2910,34 @@ const stats = getPlayerStats(batch);
         window.clearTimeout(toggleSyncTimerRef.current);
         toggleSyncTimerRef.current = null;
       }
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
       void supabase.removeChannel(channel);
     };
   }, [loadFromDatabase, scheduleRealtimeLoad]);
+
+  const loadFromDatabaseRef = useRef(loadFromDatabase);
+  useEffect(() => {
+    loadFromDatabaseRef.current = loadFromDatabase;
+  }, [loadFromDatabase]);
+
+  // Reconnect polling: while offline, probe every 15 s and sync the moment network is back.
+  const reconnectIntervalRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (syncStatus === 'offline') {
+      if (reconnectIntervalRef.current !== null) return;
+      reconnectIntervalRef.current = window.setInterval(() => {
+        if (navigator.onLine) {
+          void loadFromDatabaseRef.current();
+        }
+      }, 15000);
+    } else {
+      if (reconnectIntervalRef.current !== null) {
+        window.clearInterval(reconnectIntervalRef.current);
+        reconnectIntervalRef.current = null;
+      }
+    }
+  }, [syncStatus]);
 
   const batchCounts = useMemo(() => getBatchCounts(activeBatch), [activeBatch]);
   const queueUnits = useMemo(() => resolveQueueUnits(activeBatch), [activeBatch]);

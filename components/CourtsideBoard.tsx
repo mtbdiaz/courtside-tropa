@@ -172,6 +172,7 @@ export default function CourtsideBoard({
   const {
     activeBatch,
     isReady,
+    syncStatus,
     batchCounts,
     lastActionError,
     clearActionError,
@@ -703,16 +704,16 @@ function readPersistedBatchUiSettings() {
   const remainingLeaderboard = deferredLeaderboard.slice(3);
 
   // Automatic queue top-up when ready queue is below 4.
-  // Runs whenever the queue drops below 4, and always respects PAUSE.
+  // Runs whenever the queue drops below 4, and always respects PAUSE and autoFillEnabled.
   useEffect(() => {
-    if (publicView || scoreOnly || queuePaused) {
+    if (publicView || scoreOnly || queuePaused || !autoFillEnabled) {
       return;
     }
 
     if (activeBatch.queuedMatches.length < 4) {
       void ensureReadyMatches(activeBatch.batchId, 4);
     }
-  }, [activeBatch.batchId, activeBatch.queuedMatches.length, ensureReadyMatches, publicView, queuePaused, scoreOnly]);
+  }, [activeBatch.batchId, activeBatch.queuedMatches.length, ensureReadyMatches, publicView, queuePaused, scoreOnly, autoFillEnabled]);
 
   useEffect(() => {
     // Clear any previously running timers/watchdogs/starter timeouts
@@ -1077,6 +1078,8 @@ function readPersistedBatchUiSettings() {
     );
 
     return (
+      <>
+        <OfflineBanner syncStatus={syncStatus} />
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-3 pb-24 pt-4 sm:gap-6 sm:px-6 sm:pb-8 sm:pt-6 lg:py-8">
         <section id="public-top" className="glass-panel scroll-mt-24 rounded-[1.4rem] p-3 sm:rounded-[2rem] sm:p-6">
           <div className="flex flex-wrap items-end justify-between gap-3 sm:gap-4">
@@ -1391,6 +1394,7 @@ function readPersistedBatchUiSettings() {
           </div>
         </nav>
       </main>
+      </>
     );
   }
 
@@ -1398,7 +1402,9 @@ function readPersistedBatchUiSettings() {
     const scoreCourts = activeBatch.courts.filter((court) => court.isActive);
 
     return (
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
+      <>
+        <OfflineBanner syncStatus={syncStatus} />
+        <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
         <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
@@ -1531,12 +1537,15 @@ function readPersistedBatchUiSettings() {
             </div>
           </div>
         </section>
-      </main>
+        </main>
+      </>
     );
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
+    <>
+      <OfflineBanner syncStatus={syncStatus} />
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
       <section className="glass-panel rounded-[2rem] p-5 sm:p-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -2399,7 +2408,8 @@ function readPersistedBatchUiSettings() {
 
         </div>
       </section>
-    </main>
+      </main>
+    </>
   );
 }
 
@@ -2419,6 +2429,32 @@ function StatCard({ label, value }: { label: string; value: number }) {
     <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
       <div className="text-xs uppercase tracking-[0.28em] text-slate-400/80">{label}</div>
       <div className="mt-3 text-3xl font-semibold text-white">{value}</div>
+    </div>
+  );
+}
+
+function OfflineBanner({ syncStatus }: { syncStatus: 'loading' | 'online' | 'offline' }) {
+  if (syncStatus === 'online') return null;
+  const isLoading = syncStatus === 'loading';
+  return (
+    <div
+      className={`sticky top-0 z-50 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-semibold uppercase tracking-[0.18em] transition-all ${
+        isLoading
+          ? 'bg-amber-500/20 text-amber-100 border-b border-amber-300/25'
+          : 'bg-rose-600/25 text-rose-100 border-b border-rose-300/25'
+      }`}
+    >
+      {isLoading ? (
+        <>
+          <span className="h-2 w-2 animate-spin rounded-full border border-amber-200/50 border-t-amber-200" />
+          Reconnecting to live data…
+        </>
+      ) : (
+        <>
+          <span className="h-2 w-2 rounded-full bg-rose-400 opacity-80" />
+          Offline — showing last known data. Reconnecting automatically…
+        </>
+      )}
     </div>
   );
 }
