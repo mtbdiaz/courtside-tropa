@@ -829,10 +829,7 @@ function readPersistedBatchUiSettings() {
   };
 
   const handleAddCustomToQueue = async (placement: 'top' | 'bottom') => {
-    if (queuePaused) {
-      setCustomActionError('Queue is currently paused. Cannot add custom match.');
-      return;
-    }
+    // Allow adding custom matches even when queue is paused
     if (customSelection.length !== 4) {
       setCustomActionError('Select exactly 4 players to create a custom match.');
       return;
