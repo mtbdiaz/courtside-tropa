@@ -350,7 +350,7 @@ function readPersistedBatchUiSettings() {
             !activePlayers.has(player.id) &&
             !queuedPlayerIds.has(player.id),
         )
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     },
     [activeBatch.players, activeBatch.queuedMatches, activePlayers],
   );
@@ -2078,7 +2078,10 @@ function readPersistedBatchUiSettings() {
               <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
                 {availableForCustom.map((player) => (
                   <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                    <div className="flex flex-col">
                       <PlayerNameRow name={player.name} gender={player.gender} />
+                      <span className="text-xs text-slate-300/80 mt-1">Waiting: {formatTimer(player.createdAt, nowMs)}</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleToggleBreak(player.id)}
