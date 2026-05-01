@@ -30,7 +30,7 @@ export async function proxy(request: NextRequest) {
 
   if (request.nextUrl.pathname.startsWith('/dashboard') && !user) {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = '/';
+    redirectUrl.pathname = '/login';
     redirectUrl.searchParams.set('next', request.nextUrl.pathname);
     return NextResponse.redirect(redirectUrl);
   }
