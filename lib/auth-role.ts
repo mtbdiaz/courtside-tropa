@@ -1,4 +1,4 @@
-export const SCORER_EMAIL = 'score@tropaocaso.com';
+export const SCORER_EMAIL = 'scorer@tropaocaso.com';
 
 function normalizeEmail(email: string | null | undefined) {
   return (email ?? '').trim().toLowerCase();
