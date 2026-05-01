@@ -899,7 +899,6 @@ function readPersistedBatchUiSettings() {
   };
 
   const handlePlaceQueueOnCourt = async (courtId: string, matchId: string) => {
-    if (queuePaused) return;
     if (autoFillRunningRef.current) return;
     await startQueuedMatchOnCourt(activeBatch.batchId, courtId, matchId);
   };
