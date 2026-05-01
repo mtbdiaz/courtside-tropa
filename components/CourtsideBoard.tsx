@@ -207,6 +207,7 @@ export default function CourtsideBoard({
   const [bulkNames, setBulkNames] = useState('');
   const [bulkGender, setBulkGender] = useState<'M' | 'F'>('M');
   const [customSearch, setCustomSearch] = useState('');
+    const [customActionError, setCustomActionError] = useState<string | null>(null);
   const [customSelection, setCustomSelection] = useState<string[]>([]);
   const [scoreDrafts, setScoreDrafts] = useState<Record<string, { a: string; b: string }>>({});
   const [pairSelection, setPairSelection] = useState<string[]>([]);
@@ -828,14 +829,19 @@ function readPersistedBatchUiSettings() {
   };
 
   const handleAddCustomToQueue = async (placement: 'top' | 'bottom') => {
-    if (queuePaused) return;
-    if (customSelection.length !== 4) {
+    if (queuePaused) {
+      setCustomActionError('Queue is currently paused. Cannot add custom match.');
       return;
     }
-
-    // Avoid overlap with auto-fill
-    if (autoFillRunningRef.current) return;
-
+    if (customSelection.length !== 4) {
+      setCustomActionError('Select exactly 4 players to create a custom match.');
+      return;
+    }
+    if (autoFillRunningRef.current) {
+      setCustomActionError('Auto-fill is running. Please wait until it finishes.');
+      return;
+    }
+    setCustomActionError(null);
     await enqueueCustomMatch(activeBatch.batchId, customSelection, placement);
     setCustomSelection([]);
     setCustomSearch('');
@@ -2282,6 +2288,11 @@ function readPersistedBatchUiSettings() {
                 </div>
               </div>
             ) : null}
+            {customActionError && (
+              <div className="mb-2 rounded-xl border border-rose-300/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                {customActionError}
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button
                 type="button"
