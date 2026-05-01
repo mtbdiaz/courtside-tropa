@@ -763,12 +763,8 @@ function readPersistedBatchUiSettings() {
       }, AUTO_FILL_STUCK_TIMEOUT_MS);
 
       try {
-        // Top up queue enough to cover all idle courts and still keep 4 ready after assignment.
-        await ensureReadyMatches(activeBatch.batchId, Math.max(4, idleCourts.length + 2));
-        // If PAUSE was activated while ensureReadyMatches ran, bail out before assigning courts.
-        if (queuePaused) return;
-        // On each 15s tick, fill all currently idle courts from the queue (top-first).
-        await fillIdleCourtsRef.current(activeBatch.batchId);
+        // Each tick adds at most 1 new queue entry. Court filling is manual-only.
+        await ensureReadyMatches(activeBatch.batchId, activeBatch.queuedMatches.length + 1);
       } finally {
         if (autoFillWatchdogRef.current !== null) {
           window.clearTimeout(autoFillWatchdogRef.current);
@@ -900,27 +896,19 @@ function readPersistedBatchUiSettings() {
   };
 
   const handlePlaceQueueOnCourt = async (courtId: string, matchId: string) => {
-    if (autoFillRunningRef.current) return;
     await startQueuedMatchOnCourt(activeBatch.batchId, courtId, matchId);
   };
 
   const handleManualAutoFillCourts = async () => {
-    if (queuePaused) return;
-
-    if (queueProcessing) {
-      return;
-    }
-
-    if (idleCourts.length === 0) {
-      return;
-    }
-
-    // If auto-fill is enabled and currently running, avoid overlapping execution.
+    if (queueProcessing) return;
+    if (idleCourts.length === 0) return;
     if (autoFillEnabled && autoFillRunningRef.current) return;
 
-    // Manual override: top up ready queue first, then push queued matches to idle courts.
-    const targetReady = Math.min(4, Math.max(activeBatch.queuedMatches.length, idleCourts.length));
-    await ensureReadyMatches(activeBatch.batchId, targetReady);
+    // Only top up queue when not paused — paused means drain existing queue only.
+    if (!queuePaused) {
+      const targetReady = Math.min(4, Math.max(activeBatch.queuedMatches.length, idleCourts.length));
+      await ensureReadyMatches(activeBatch.batchId, targetReady);
+    }
     await fillIdleCourts(activeBatch.batchId, 1);
   };
 
@@ -1803,12 +1791,14 @@ function readPersistedBatchUiSettings() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() =>
-                    setQueuePausedByBatch((current) => ({
-                      ...current,
-                      [activeBatch.batchId]: !current[activeBatch.batchId],
-                    }))
-                  }
+                  onClick={() => {
+                    setQueuePausedByBatch((current) => {
+                      const next = { ...current, [activeBatch.batchId]: !current[activeBatch.batchId] };
+                      // Sync immediately so ensureReadyMatches sees it before the effect fires.
+                      try { (window as any).__COURTSIDE_QUEUE_PAUSED_BY_BATCH = next; } catch { /* ignore */ }
+                      return next;
+                    });
+                  }}
                   className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
                     queuePaused
                       ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15'

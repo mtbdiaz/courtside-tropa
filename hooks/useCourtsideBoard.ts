@@ -2104,13 +2104,6 @@ const stats = getPlayerStats(batch);
     }
 
     try {
-      try {
-        if (isQueuePausedByBatch(batchId)) {
-          return;
-        }
-      } catch {
-        // ignore
-      }
       if (selectedPlayers && selectedPlayers.playerIds.length === 4) {
         const payload: {
         batch_id: string;
@@ -2650,8 +2643,9 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(batchId);
+    const lockAcquired = await acquireQueueLock(batchId, 5000);
     if (!lockAcquired) {
+      reportActionError('Queue-to-court failed: system is busy, please try again.');
       return;
     }
 
@@ -2702,49 +2696,43 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(batchId, 2000);
-    if (!lockAcquired) {
-      reportActionError('Delete all players failed: queue is busy, please try again.');
+    // Nuclear admin op — force-clear any held in-memory lock so it's never blocked.
+    queueMutationLockRef.current = false;
+    setQueueProcessing(false);
+
+    const { error: matchesError } = await supabase
+      .from('matches')
+      .delete()
+      .eq('batch_id', dbBatchId);
+    if (matchesError) {
+      reportActionError(`Delete all players failed while clearing matches: ${matchesError.message}`);
       return;
     }
 
-    try {
-      const { error: matchesError } = await supabase
-        .from('matches')
-        .delete()
-        .eq('batch_id', dbBatchId);
-      if (matchesError) {
-        reportActionError(`Delete all players failed while clearing matches: ${matchesError.message}`);
-        return;
-      }
-
-      const { error: courtsError } = await supabase
-        .from('courts')
-        .update({
-          status: 'free',
-          current_match_id: null,
-          start_time: null,
-        })
-        .eq('batch_id', dbBatchId);
-      if (courtsError) {
-        reportActionError(`Delete all players failed while resetting courts: ${courtsError.message}`);
-        return;
-      }
-
-      const { error: playersError } = await supabase
-        .from('players')
-        .delete()
-        .eq('batch_id', dbBatchId);
-      if (playersError) {
-        reportActionError(`Delete all players failed: ${playersError.message}`);
-        return;
-      }
-
-      await loadFromDatabase();
-    } finally {
-      releaseQueueLock(batchId);
+    const { error: courtsError } = await supabase
+      .from('courts')
+      .update({
+        status: 'free',
+        current_match_id: null,
+        start_time: null,
+      })
+      .eq('batch_id', dbBatchId);
+    if (courtsError) {
+      reportActionError(`Delete all players failed while resetting courts: ${courtsError.message}`);
+      return;
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
+
+    const { error: playersError } = await supabase
+      .from('players')
+      .delete()
+      .eq('batch_id', dbBatchId);
+    if (playersError) {
+      reportActionError(`Delete all players failed: ${playersError.message}`);
+      return;
+    }
+
+    await loadFromDatabase();
+  }, [clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const setAllPlayersBreakForBatch = useCallback(async (batchId: BatchId) => {
     clearActionError();
@@ -2755,50 +2743,44 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(batchId, 2000);
-    if (!lockAcquired) {
-      reportActionError('Set all players to break failed: queue is busy, please try again.');
+    // Nuclear admin op — force-clear any held in-memory lock so it's never blocked.
+    queueMutationLockRef.current = false;
+    setQueueProcessing(false);
+
+    const { error: clearMatchesError } = await supabase
+      .from('matches')
+      .delete()
+      .eq('batch_id', dbBatchId)
+      .in('status', ['queued', 'playing', 'active']);
+    if (clearMatchesError) {
+      reportActionError(`Set all players to break failed while clearing active queue: ${clearMatchesError.message}`);
       return;
     }
 
-    try {
-      const { error: clearMatchesError } = await supabase
-        .from('matches')
-        .delete()
-        .eq('batch_id', dbBatchId)
-        .in('status', ['queued', 'playing', 'active']);
-      if (clearMatchesError) {
-        reportActionError(`Set all players to break failed while clearing active queue: ${clearMatchesError.message}`);
-        return;
-      }
-
-      const { error: courtsError } = await supabase
-        .from('courts')
-        .update({
-          status: 'free',
-          current_match_id: null,
-          start_time: null,
-        })
-        .eq('batch_id', dbBatchId);
-      if (courtsError) {
-        reportActionError(`Set all players to break failed while resetting courts: ${courtsError.message}`);
-        return;
-      }
-
-      const { error: playersError } = await supabase
-        .from('players')
-        .update({ status: 'break' })
-        .eq('batch_id', dbBatchId);
-      if (playersError) {
-        reportActionError(`Set all players to break failed: ${playersError.message}`);
-        return;
-      }
-
-      await loadFromDatabase();
-    } finally {
-      releaseQueueLock(batchId);
+    const { error: courtsError } = await supabase
+      .from('courts')
+      .update({
+        status: 'free',
+        current_match_id: null,
+        start_time: null,
+      })
+      .eq('batch_id', dbBatchId);
+    if (courtsError) {
+      reportActionError(`Set all players to break failed while resetting courts: ${courtsError.message}`);
+      return;
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
+
+    const { error: playersError } = await supabase
+      .from('players')
+      .update({ status: 'break' })
+      .eq('batch_id', dbBatchId);
+    if (playersError) {
+      reportActionError(`Set all players to break failed: ${playersError.message}`);
+      return;
+    }
+
+    await loadFromDatabase();
+  }, [clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const deleteAllMatchHistoryForBatch = useCallback(async (batchId: BatchId) => {
     clearActionError();
@@ -2809,37 +2791,31 @@ const stats = getPlayerStats(batch);
       return;
     }
 
-    const lockAcquired = await acquireQueueLock(batchId, 2000);
-    if (!lockAcquired) {
-      reportActionError('Delete match history failed: queue is busy, please try again.');
+    // Nuclear admin op — force-clear any held in-memory lock so it's never blocked.
+    queueMutationLockRef.current = false;
+    setQueueProcessing(false);
+
+    const { error: historyError } = await supabase
+      .from('match_history')
+      .delete()
+      .eq('batch_id', dbBatchId);
+    if (historyError) {
+      reportActionError(`Delete match history failed: ${historyError.message}`);
       return;
     }
 
-    try {
-      const { error: historyError } = await supabase
-        .from('match_history')
-        .delete()
-        .eq('batch_id', dbBatchId);
-      if (historyError) {
-        reportActionError(`Delete match history failed: ${historyError.message}`);
-        return;
-      }
-
-      const { error: completedMatchesError } = await supabase
-        .from('matches')
-        .delete()
-        .eq('batch_id', dbBatchId)
-        .eq('status', 'completed');
-      if (completedMatchesError) {
-        reportActionError(`Delete match history failed while clearing completed matches: ${completedMatchesError.message}`);
-        return;
-      }
-
-      await loadFromDatabase();
-    } finally {
-      releaseQueueLock(batchId);
+    const { error: completedMatchesError } = await supabase
+      .from('matches')
+      .delete()
+      .eq('batch_id', dbBatchId)
+      .eq('status', 'completed');
+    if (completedMatchesError) {
+      reportActionError(`Delete match history failed while clearing completed matches: ${completedMatchesError.message}`);
+      return;
     }
-  }, [acquireQueueLock, clearActionError, loadFromDatabase, releaseQueueLock, reportActionError, withBatchDbId]);
+
+    await loadFromDatabase();
+  }, [clearActionError, loadFromDatabase, reportActionError, withBatchDbId]);
 
   const signOut = useCallback(async () => {
     const supabase = supabaseRef.current;
