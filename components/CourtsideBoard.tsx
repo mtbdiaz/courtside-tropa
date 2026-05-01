@@ -1,6 +1,7 @@
 'use client';
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import debounce from 'lodash.debounce';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BatchId, Gender } from '@/types/courtside';
@@ -208,6 +209,7 @@ export default function CourtsideBoard({
   const [bulkGender, setBulkGender] = useState<'M' | 'F'>('M');
   const [customSearch, setCustomSearch] = useState('');
     const [customActionError, setCustomActionError] = useState<string | null>(null);
+    const [customActionLoading, setCustomActionLoading] = useState(false);
   const [customSelection, setCustomSelection] = useState<string[]>([]);
   const [scoreDrafts, setScoreDrafts] = useState<Record<string, { a: string; b: string }>>({});
   const [pairSelection, setPairSelection] = useState<string[]>([]);
@@ -839,9 +841,14 @@ function readPersistedBatchUiSettings() {
       return;
     }
     setCustomActionError(null);
-    await enqueueCustomMatch(activeBatch.batchId, customSelection, placement);
-    setCustomSelection([]);
-    setCustomSearch('');
+    setCustomActionLoading(true);
+    try {
+      await enqueueCustomMatch(activeBatch.batchId, customSelection, placement);
+      setCustomSelection([]);
+      setCustomSearch('');
+    } finally {
+      setCustomActionLoading(false);
+    }
   };
 
   const handleDeleteQueueMatch = async (sourceUnitIds: string[]) => {
@@ -2290,10 +2297,13 @@ function readPersistedBatchUiSettings() {
                 {customActionError}
               </div>
             )}
+            {customActionLoading && (
+              <div className="mb-2 text-xs text-amber-200">Processing custom match...</div>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                disabled={customSelection.length !== 4 || queueProcessing}
+                disabled={customSelection.length !== 4 || queueProcessing || customActionLoading}
                 onClick={() => handleAddCustomToQueue('top')}
                 className="rounded-2xl bg-gradient-to-r from-orange-500 to-pink-500 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -2301,7 +2311,7 @@ function readPersistedBatchUiSettings() {
               </button>
               <button
                 type="button"
-                disabled={customSelection.length !== 4 || queueProcessing}
+                disabled={customSelection.length !== 4 || queueProcessing || customActionLoading}
                 onClick={() => handleAddCustomToQueue('bottom')}
                 className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
