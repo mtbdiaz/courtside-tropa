@@ -148,7 +148,6 @@ export default function LeaderboardBoard() {
   const [batches, setBatches] = useState<BatchRow[]>([]);
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isPausedRef = useRef(false);
 
   const [supabase] = useState(() => createSupabaseBrowserClient());
 
@@ -214,32 +213,6 @@ export default function LeaderboardBoard() {
     return filtered.length;
   }, [rows, activeBatchId]);
 
-  // Auto-scroll remaining entries
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || remaining.length < 6) return;
-
-    el.scrollTop = 0;
-    let animId: number;
-    let lastTime = 0;
-
-    const animate = (time: number) => {
-      if (!lastTime) lastTime = time;
-      const delta = time - lastTime;
-      lastTime = time;
-
-      if (el && !isPausedRef.current) {
-        el.scrollTop += delta * 0.028;
-        if (el.scrollTop >= el.scrollHeight - el.clientHeight) {
-          el.scrollTop = 0;
-        }
-      }
-      animId = requestAnimationFrame(animate);
-    };
-
-    animId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animId);
-  }, [remaining]);
 
   if (loading) {
     return (
@@ -269,13 +242,7 @@ export default function LeaderboardBoard() {
               Courtside Tropa · Paddle Up! Davao · May 1, 2026
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-500/10 px-3 py-1.5">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100 sm:text-xs">
-              Live
-            </span>
           </div>
-        </div>
 
         {/* Tab buttons */}
         <div className="mt-4 flex flex-wrap gap-2">
@@ -425,22 +392,12 @@ export default function LeaderboardBoard() {
                   <h3 className="text-base font-semibold text-white sm:text-lg">
                     Full Standings
                   </h3>
-                  {remaining.length >= 6 && (
-                    <span className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-slate-300/70 sm:text-xs">
-                      <span className="h-1 w-1 rounded-full bg-amber-300/70" />
-                      Auto-scroll · hover to pause
-                    </span>
-                  )}
                 </div>
 
                 <div
                   ref={scrollRef}
-                  className="space-y-2 overflow-hidden pr-0.5"
+                  className="space-y-2 overflow-y-auto pr-0.5"
                   style={{ maxHeight: remaining.length >= 6 ? '20rem' : undefined }}
-                  onMouseEnter={() => (isPausedRef.current = true)}
-                  onMouseLeave={() => (isPausedRef.current = false)}
-                  onTouchStart={() => (isPausedRef.current = true)}
-                  onTouchEnd={() => (isPausedRef.current = false)}
                 >
                   {remaining.map((entry, index) => (
                     <motion.div
@@ -473,9 +430,6 @@ export default function LeaderboardBoard() {
         )}
       </AnimatePresence>
 
-      <p className="mt-6 text-center text-[10px] uppercase tracking-[0.22em] text-slate-400/50 sm:text-xs">
-        Updates automatically as matches complete
-      </p>
     </main>
   );
 }
